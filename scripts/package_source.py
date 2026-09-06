@@ -30,7 +30,7 @@ def package(root: Path, output: Path) -> dict:
     manifest = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in entries)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, data in entries + [("MANIFEST.sha256", manifest.encode())]:
-            info = zipfile.ZipInfo("devhub/" + name, date_time=(2026, 9, 6, 0, 0, 0))
+            info = zipfile.ZipInfo("agentdock/" + name, date_time=(2026, 9, 6, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (0o100755 if name.endswith(".sh") else 0o100644) << 16
             archive.writestr(info, data)
@@ -47,17 +47,17 @@ def verify(path: Path) -> None:
             raise ValueError("duplicate archive entries")
         for name in names:
             item = PurePosixPath(name)
-            if item.is_absolute() or ".." in item.parts or not name.startswith("devhub/"):
+            if item.is_absolute() or ".." in item.parts or not name.startswith("agentdock/"):
                 raise ValueError(f"unsafe archive path: {name}")
-        manifest = archive.read("devhub/MANIFEST.sha256").decode("utf-8")
+        manifest = archive.read("agentdock/MANIFEST.sha256").decode("utf-8")
         expected = set()
         for line in manifest.splitlines():
             digest, relative = line.split("  ", 1)
-            name = "devhub/" + relative
+            name = "agentdock/" + relative
             expected.add(name)
             if hashlib.sha256(archive.read(name)).hexdigest() != digest:
                 raise ValueError(f"checksum mismatch: {name}")
-        if expected | {"devhub/MANIFEST.sha256"} != set(names):
+        if expected | {"agentdock/MANIFEST.sha256"} != set(names):
             raise ValueError("manifest does not match archive inventory")
 
 

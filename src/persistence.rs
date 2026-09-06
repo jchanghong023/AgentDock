@@ -37,7 +37,7 @@ impl Persistence {
         let state=load(&directory)?;
         // One pending snapshot; the app retries while dirty if the queue is busy.
         let (tx,rx)=bounded::<Store>(1);let (error_tx,errors)=bounded(8);
-        let worker=std::thread::Builder::new().name("devhub-state".into()).spawn(move || {
+        let worker=std::thread::Builder::new().name("agentdock-state".into()).spawn(move || {
             while let Ok(state)=rx.recv() { if let Err(e)=save_atomic(&directory,&state) { let _=error_tx.try_send(format!("保存失败：{e:#}")); } }
         })?;
         Ok((Self { _lock:lock,tx:Some(tx),errors,worker:Some(worker) },state))

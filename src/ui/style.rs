@@ -24,7 +24,7 @@ pub fn icon() -> Option<iced::window::Icon> {
     iced::window::icon::from_rgba(pixels, 32, 32).ok()
 }
 pub fn theme() -> Theme {
-    Theme::custom("DevHub", iced::theme::Palette {
+    Theme::custom("AgentDock", iced::theme::Palette {
         background: Color::WHITE, text: INK, primary: BLUE,
         success: Color::from_rgb8(33, 158, 103), danger: Color::from_rgb8(207, 59, 69),
         warning: Color::from_rgb8(255, 185, 0),

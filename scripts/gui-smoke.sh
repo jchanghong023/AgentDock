@@ -8,8 +8,8 @@ cargo build --locked
 state=$(mktemp -d)
 trap 'rm -rf -- "$state"' EXIT
 xvfb-run -a -s '-screen 0 1240x820x24' timeout 30s \
-    target/debug/devhub --state-dir "$state" --smoke-ui-ms 2000 --open examples/README.md \
+    target/debug/agentdock --state-dir "$state" --smoke-ui-ms 2000 --open examples/README.md \
     >"$state/stdout.log" 2>"$state/stderr.log"
 cat "$state/stdout.log" "$state/stderr.log"
-grep -q 'DEVHUB_GUI_SMOKE_EVENT_LOOP_OK' "$state/stderr.log"
+grep -q 'AGENTDOCK_GUI_SMOKE_EVENT_LOOP_OK' "$state/stderr.log"
 echo 'GUI event loop and automatic close completed. This is not an IME or visual quality test.'

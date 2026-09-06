@@ -27,11 +27,11 @@ impl Session{
         anyhow::ensure!(cwd.is_dir(),"工作目录不可访问：{}",cwd.display());
         let pair=native_pty_system().openpty(PtySize{rows:24,cols:80,pixel_width:0,pixel_height:0})?;
         let launch=launch.resolved();let mut cmd=CommandBuilder::new(&launch.program);cmd.args(&launch.args);cmd.cwd(cwd);
-        cmd.env("TERM","xterm-256color");cmd.env("COLORTERM","truecolor");cmd.env("TERM_PROGRAM","DevHub");cmd.env("TERM_PROGRAM_VERSION",env!("CARGO_PKG_VERSION"));
+        cmd.env("TERM","xterm-256color");cmd.env("COLORTERM","truecolor");cmd.env("TERM_PROGRAM","AgentDock");cmd.env("TERM_PROGRAM_VERSION",env!("CARGO_PKG_VERSION"));
         let mut reader=pair.master.try_clone_reader()?;let mut writer=pair.master.take_writer()?;
         let mut child=pair.slave.spawn_command(cmd).with_context(||format!("启动 {}",launch.program))?;drop(pair.slave);
         let(tx,output)=bounded::<Output>(128);let errors_tx=tx.clone();let(input_tx,input_rx)=bounded::<Vec<u8>>(256);
-        let reader_thread=std::thread::Builder::new().name("devhub-pty-read".into()).spawn(move||{
+        let reader_thread=std::thread::Builder::new().name("agentdock-pty-read".into()).spawn(move||{
             let mut bytes=[0u8;8192];loop{match reader.read(&mut bytes){
                 Ok(0)=>{let _=tx.send(Output::Eof);break;},
                 Ok(n)=>{if tx.send(Output::Bytes(bytes[..n].to_vec())).is_err(){break;}},
@@ -41,7 +41,7 @@ impl Session{
             }}
         });
         if let Err(e)=reader_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
-        let writer_thread=std::thread::Builder::new().name("devhub-pty-write".into()).spawn(move||{
+        let writer_thread=std::thread::Builder::new().name("agentdock-pty-write".into()).spawn(move||{
             while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){let _=errors_tx.send(Output::Error(e.to_string()));break;}}
         });
         if let Err(e)=writer_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
@@ -67,16 +67,16 @@ impl Session{
     }
 }
 impl Drop for Session{
-    fn drop(&mut self){if let Some(mut child)=self.child.take(){if !matches!(child.try_wait(),Ok(Some(_))){let _=child.kill();let _=std::thread::Builder::new().name("devhub-reap".into()).spawn(move||{let _=child.wait();});}}}
+    fn drop(&mut self){if let Some(mut child)=self.child.take(){if !matches!(child.try_wait(),Ok(Some(_))){let _=child.kill();let _=std::thread::Builder::new().name("agentdock-reap".into()).spawn(move||{let _=child.wait();});}}}
 }
 pub fn self_test()->Result<()>{
-    #[cfg(unix)]let command=Launch{program:"/bin/sh".into(),args:vec!["-c".into(),"printf 'DEVHUB_READY\\n'; read line; printf 'DEVHUB_ECHO:%s\\n' \"$line\"".into()]};
-    #[cfg(windows)]let command=Launch{program:"cmd.exe".into(),args:vec!["/Q".into(),"/V:ON".into(),"/C".into(),"echo DEVHUB_READY & set /p token= & echo DEVHUB_ECHO:!token!".into()]};
+    #[cfg(unix)]let command=Launch{program:"/bin/sh".into(),args:vec!["-c".into(),"printf 'AGENTDOCK_READY\\n'; read line; printf 'AGENTDOCK_ECHO:%s\\n' \"$line\"".into()]};
+    #[cfg(windows)]let command=Launch{program:"cmd.exe".into(),args:vec!["/Q".into(),"/V:ON".into(),"/C".into(),"echo AGENTDOCK_READY & set /p token= & echo AGENTDOCK_ECHO:!token!".into()]};
     let mut s=Session::spawn(&std::env::current_dir()?,&command,&Settings::default())?;s.resize(100,30,1000,600)?;
     let start=Instant::now();let mut sent=false;
     while start.elapsed()<Duration::from_secs(8){s.poll(65536);let text=s.engine.visible_text();
-        if !sent&&text.contains("DEVHUB_READY"){s.engine.text("roundtrip-123")?;s.engine.terminal.key_down(wezterm_term::KeyCode::Enter,wezterm_term::KeyModifiers::NONE)?;sent=true;}
-        if text.contains("DEVHUB_ECHO:roundtrip-123"){return Ok(());}std::thread::sleep(Duration::from_millis(20));
+        if !sent&&text.contains("AGENTDOCK_READY"){s.engine.text("roundtrip-123")?;s.engine.terminal.key_down(wezterm_term::KeyCode::Enter,wezterm_term::KeyModifiers::NONE)?;sent=true;}
+        if text.contains("AGENTDOCK_ECHO:roundtrip-123"){return Ok(());}std::thread::sleep(Duration::from_millis(20));
     }anyhow::bail!("PTY 自测超时：{:?}; error={:?}",s.engine.visible_text(),s.error)
 }
 #[cfg(test)]mod tests{#[test]fn real_pty_io_resize(){super::self_test().unwrap();}}

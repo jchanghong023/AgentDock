@@ -52,7 +52,7 @@ impl FileService{
     pub fn new(page_size:usize,preview_limit:usize)->std::io::Result<Self>{
         let(tx,requests)=bounded::<Request>(32);let(out,rx)=bounded(32);
         let (omp_tx, omp_rx) = bounded::<PathBuf>(1); let omp_out = out.clone();
-        std::thread::Builder::new().name("devhub-omp-sessions".into()).spawn(move || {
+        std::thread::Builder::new().name("agentdock-omp-sessions".into()).spawn(move || {
             let mut scanner = crate::omp::Scanner::default();
             let mut previous = None;
             while let Ok(root) = omp_rx.recv() {
@@ -65,14 +65,14 @@ impl FileService{
         })?;
         let(preview_tx,preview_rx)=bounded::<(PathBuf,u64)>(8);let preview_out=out.clone();
         // A slow directory read must not block the separate preview worker.
-        std::thread::Builder::new().name("devhub-preview".into()).spawn(move||{
+        std::thread::Builder::new().name("agentdock-preview".into()).spawn(move||{
             while let Ok((mut path,mut token))=preview_rx.recv(){
                 for newer in preview_rx.try_iter(){(path,token)=newer;}
                 let result=read_preview(&path,preview_limit).map(Arc::new).map_err(|e|e.to_string());
                 if preview_out.send(Completed::Preview{token,result}).is_err(){break;}
             }
         })?;
-        std::thread::Builder::new().name("devhub-files".into()).spawn(move||{
+        std::thread::Builder::new().name("agentdock-files".into()).spawn(move||{
             let mut cursors:HashMap<PathBuf,DirectoryReader>=HashMap::new();
             while let Ok(request)=requests.recv(){
                 let result=match request{

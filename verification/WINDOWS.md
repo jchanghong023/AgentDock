@@ -1,9 +1,14 @@
-# Windows 构建与 GUI 验证
+# Windows 首次构建与 GUI 验证（历史记录）
+
+本报告保留首次验证当时的行为和结果。后续已移除系统树中的项目入口、
+改为 OMP 会话并完成 Release 性能修复；最新结果见 [OMP.md](OMP.md) 和
+[PERFORMANCE.md](PERFORMANCE.md)。下文旧路径是当时的产物位置；
+新增临时文件、下载及验证状态须按当前 AGENTS.md 放在 .tmp/。
 
 日期：2026-09-07。环境：Windows，Rust 1.98.0，Cargo 1.98.0，x86_64 MSVC。
 
 已生成并实际运行 `target/debug/devhub.exe`（开发构建），生成了真实 `Cargo.lock`。
-当前源码目录不是 Git 仓库；修改前的自有源码备份在 `verification/original/src/`。
+首次验证时源码目录尚不是 Git 仓库；修改前的自有源码备份在 `verification/original/src/`。
 
 ## 修复与界面
 

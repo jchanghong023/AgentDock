@@ -50,13 +50,13 @@ pub fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }))
 }
 pub fn state_dir() -> PathBuf {
-    if let Some(p) = std::env::var_os("DEVHUB_HOME") { return p.into(); }
+    if let Some(p) = std::env::var_os("AGENTDOCK_HOME") { return p.into(); }
     #[cfg(windows)] {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(home).join("DevHub")
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(home).join("AgentDock")
     }
     #[cfg(unix)] {
         std::env::var_os("XDG_STATE_HOME").map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".local/state")).join("devhub")
+            .unwrap_or_else(|| home().join(".local/state")).join("agentdock")
     }
 }
 #[cfg(test)] mod tests {

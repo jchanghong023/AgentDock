@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print terminal fixtures. Run inside DevHub; inspect visually, not a pass/fail test."""
+"""Print terminal fixtures. Run inside AgentDock; inspect visually, not a pass/fail test."""
 import argparse
 import sys
 import time

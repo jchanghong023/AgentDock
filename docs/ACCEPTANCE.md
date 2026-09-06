@@ -1,12 +1,15 @@
-# 运行验收清单（全部待实机执行）
+# 运行验收清单（部分完成）
 
-本文件列出应执行的验收，不是已经通过的结果。实际本次检查见 verification。
+勾选项仅表示已有对应验证记录，未勾选项仍需验收；不把 Windows 结果推广到 Linux。
+已有结果见 [Windows](../verification/WINDOWS.md)、[性能](../verification/PERFORMANCE.md)
+及 [OMP](../verification/OMP.md)。早期报告中的测试数量对应各自阶段。
 
 ## 基础构建
 
-- [ ] cargo fmt / check / test / clippy 完成，保存工具链版本与 Cargo.lock。
+- [x] Windows：Release 构建、44 项 Rust 测试通过，已保存 Cargo.lock。
+- [ ] cargo fmt / check / clippy 完整复验；首次普通 Clippy 通过但仍有告警。
 - [ ] Windows 与 Linux 各自构建，不用一平台结果代替另一平台。
-- [ ] --self-test 返回 DEVHUB_PTY_SELF_TEST_OK，确认真 PTY 双向通信。
+- [ ] --self-test 返回 AGENTDOCK_PTY_SELF_TEST_OK，确认真 PTY 双向通信。
 - [ ] Xvfb GUI 冒烟返回事件循环标记，随后人工检查截图与输入。
 
 ## 产品行为
@@ -17,7 +20,12 @@
 - [ ] 单击文件不读取内容；双击才预览。
 - [ ] 文件预览期间终端命令继续工作；关闭预览可返回原终端。
 - [ ] 关闭运行中的终端/退出应用有确认；取消不会中断进程。
-- [ ] 历史会话无 resume 时明确提示，不伪装恢复 Agent 聊天。
+- [x] Windows：单击未运行 OMP 历史不启动，双击通过 --resume 精确恢复所选旧记录。
+- [x] Windows：OMP 子进程收到 --profile default。
+- [ ] 命名 profile 在真实 OMP 中隔离并恢复；当前只有路径/参数检查与测试。
+- [ ] 所选会话文件被删除后提示错误，不恢复其他历史。
+- [ ] 左下仅显示系统根入口：Windows 盘符、Linux /；不额外添加项目节点。
+- [ ] 按最新效果图验收 AgentDock 的窗口标题、命令行名称和界面布局。
 
 ## 终端
 

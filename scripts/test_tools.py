@@ -51,8 +51,8 @@ class ArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "bad.zip"
             with zipfile.ZipFile(output, "w") as archive:
-                archive.writestr("devhub/a", "data")
-                archive.writestr("devhub/MANIFEST.sha256", "0" * 64 + "  a\n")
+                archive.writestr("agentdock/a", "data")
+                archive.writestr("agentdock/MANIFEST.sha256", "0" * 64 + "  a\n")
             with self.assertRaises(ValueError):
                 package_source.verify(output)
 

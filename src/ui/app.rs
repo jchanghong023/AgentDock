@@ -185,9 +185,9 @@ impl App {
     }
     pub fn title(&self) -> String {
         match self.active {
-            Content::Terminal(id) => self.store.session(id).map(|(p, s)| format!("{} · {} — DevHub", s.title, paths::name(&p.path))).unwrap_or_else(|| "DevHub".into()),
-            Content::Preview => self.document.as_ref().map(|d| format!("{} · 只读 — DevHub", paths::name(&d.preview.path))).unwrap_or_else(|| "DevHub".into()),
-            Content::Empty => "DevHub · 原生终端工作台".into(),
+            Content::Terminal(id) => self.store.session(id).map(|(p, s)| format!("{} · {} — AgentDock", s.title, paths::name(&p.path))).unwrap_or_else(|| "AgentDock".into()),
+            Content::Preview => self.document.as_ref().map(|d| format!("{} · 只读 — AgentDock", paths::name(&d.preview.path))).unwrap_or_else(|| "AgentDock".into()),
+            Content::Empty => "AgentDock · 原生终端工作台".into(),
         }
     }
     pub fn subscription(&self) -> Subscription<Message> {
@@ -277,7 +277,7 @@ impl App {
         self.sessions.remove(&id);
         self.spawning.insert(id);
         if !self.tabs.contains(&id) { self.tabs.push(id); }
-        let result = std::thread::Builder::new().name("devhub-spawn".into()).spawn(move || {
+        let result = std::thread::Builder::new().name("agentdock-spawn".into()).spawn(move || {
             let session = Session::spawn(&path, &launch, &settings).map_err(|e| format!("{e:#}"));
             let _ = output.send((id, session));
         });
@@ -376,7 +376,7 @@ impl App {
                 if output { self.snapshot = Some((id, session.engine.snapshot())); }
             }
             let title: String = session.engine.terminal.get_title().chars().filter(|c| !c.is_control()).take(120).collect();
-            if !title.is_empty() && title != "DevHub" && title != "wezterm" && self.store.session(id).is_some_and(|(_, s)| s.title != title) {
+            if !title.is_empty() && title != "AgentDock" && title != "wezterm" && self.store.session(id).is_some_and(|(_, s)| s.title != title) {
                 self.store.title(id, &title); self.dirty = true; changed = true;
             }
             if previous_running != session.running() || previous_unread != session.unread { changed = true; }
@@ -387,7 +387,7 @@ impl App {
         for error in self.persistence.errors.try_iter() { self.notice = Some(error); self.dirty = true; }
         if self.dirty && self.persistence.save(&self.store) { self.dirty = false; }
         if self.smoke_ms.is_some_and(|ms| self.started.elapsed() >= Duration::from_millis(ms)) {
-            if let Some(id) = self.window { eprintln!("DEVHUB_GUI_SMOKE_EVENT_LOOP_OK"); return self.finish(id); }
+            if let Some(id) = self.window { eprintln!("AGENTDOCK_GUI_SMOKE_EVENT_LOOP_OK"); return self.finish(id); }
         }
         Task::none()
     }
@@ -569,7 +569,7 @@ impl App {
                 if document.pages.len() > 1 { controls = controls.push(button("‹").on_press(Message::PreviewPage(-1))).push(button("›").on_press(Message::PreviewPage(1))); }
                 column![container(controls).padding([6, 20]), scrollable(container(view).padding([10, 26]).width(Length::Fill)).height(Length::Fill)].into()
             }
-            Content::Empty => container(column![text("DevHub").size(30), text("从左侧选择会话，或点击目录旁的 + 新建终端。"), text("双击文件只读预览。没有菜单、编辑器或工作树。")].spacing(14)).center_x(Length::Fill).center_y(Length::Fill).padding(24).into(),
+            Content::Empty => container(column![text("AgentDock").size(30), text("从左侧选择会话，或点击目录旁的 + 新建终端。"), text("双击文件只读预览。没有菜单、编辑器或工作树。")].spacing(14)).center_x(Length::Fill).center_y(Length::Fill).padding(24).into(),
         }
     }
     pub fn view(&self) -> Element<'_, Message> {

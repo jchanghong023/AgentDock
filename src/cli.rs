@@ -61,8 +61,8 @@ impl Options {
         Ok(options)
     }
 }
-pub const HELP: &str = "DevHub 0.1.0 — 原生终端工作台\n\n\
-用法: devhub [--project DIRECTORY] [--command PROGRAM [--arg ARG]...]\n\
+pub const HELP: &str = "AgentDock 0.1.0 — 原生终端工作台\n\n\
+用法: agentdock [--project DIRECTORY] [--command PROGRAM [--arg ARG]...]\n\
               [--profile NAME] [--open FILE] [--state-dir DIRECTORY]\n\n\
   --project DIRECTORY   添加目录并启动 OMP Agent 会话\n\
   --profile NAME        将配置名称传给 OMP（也支持 --profile=NAME）\n\

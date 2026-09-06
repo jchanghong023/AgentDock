@@ -31,7 +31,7 @@ fn rgba(c:SrgbaTuple)->[f32;4]{[c.0 as f32,c.1 as f32,c.2 as f32,c.3 as f32]}
 pub struct Engine{pub terminal:Terminal,offset:usize,selection:Option<Selection>,generation:usize}
 impl Engine{
     pub fn new(settings:&Settings,writer:Box<dyn Write+Send>)->Self{
-        let mut terminal=Terminal::new(TerminalSize::default(),Arc::new(Config{scrollback:settings.scrollback_lines}),"DevHub",env!("CARGO_PKG_VERSION"),writer);
+        let mut terminal=Terminal::new(TerminalSize::default(),Arc::new(Config{scrollback:settings.scrollback_lines}),"AgentDock",env!("CARGO_PKG_VERSION"),writer);
         #[cfg(windows)]terminal.enable_conpty_quirks();
         terminal.focus_changed(true);Self{terminal,offset:0,selection:None,generation:0}
     }

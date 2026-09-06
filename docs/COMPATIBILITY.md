@@ -4,12 +4,14 @@
 
 | 平台 | 源码目标 | 本次编译 | 本次运行 |
 | --- | --- | --- | --- |
-| Windows x64 | Win32 窗口、ConPTY、软件渲染 | 未执行 | 未执行 |
+| Windows x64 | Win32 窗口、ConPTY、软件渲染 | 已通过 Debug / Release 构建 | 已打开 GUI，验证 ConPTY 与 OMP 指定历史恢复 |
 | 新 Linux x64 | X11、Unix PTY、软件渲染 | 未执行 | 未执行 |
 | CentOS 7 x64 | glibc 2.17、X11、Unix PTY、无物理 GPU | 未执行 | 未执行 |
 
-开发环境实际为 Debian 13 x86_64，没有 rustc/cargo。不能从源码静态检查得出
-任何上述平台已通过编译的结论。CentOS 7 是设计目标，不是已经通过的兼容标签。
+截至 2026-09-07，Windows 使用 Rust / Cargo 1.98.0、MSVC 工具链完成构建，
+最近一次 Release 测试 44 项通过。见 [OMP 验证](../verification/OMP.md) 和
+[Windows 首次验证](../verification/WINDOWS.md)。初始 Debian 环境缺少工具链的
+记录仅代表早期交付阶段。CentOS 7 是设计目标，尚未通过实机兼容性验证。
 
 ## CentOS 7
 
@@ -26,7 +28,7 @@ X11/xcb、xkbcommon、Fontconfig 及传递依赖需要的开发库。应用代�
 即使构建成功，还须执行：
 
 ```bash
-python3 scripts/audit_abi.py target/x86_64-unknown-linux-gnu/release/devhub --glibc-max 2.17
+python3 scripts/audit_abi.py target/x86_64-unknown-linux-gnu/release/agentdock --glibc-max 2.17
 ```
 
 审计工具需 Python 3.11+，可在现代分析机上对二进制执行，不是应用运行依赖。
@@ -50,7 +52,7 @@ C++ 源码，但原生构建依赖可能需要工具链。运行时字体使用�
 ## 依赖锁定
 
 当前 Cargo.toml 固定 Iced 与 portable-pty 的直接版本，WezTerm 以固定 revision
-引用。没有在缺少 Cargo 的环境中伪造 Cargo.lock。首个成功构建必须保存真实
-锁文件，并复核传递依赖、许可证和最低工具链；之后使用 --locked 验证。
+引用。已提交 Windows 首次成功构建生成的 Cargo.lock，后续使用 --locked。
+当前工具链构建成功不代表已验证所有传递依赖的最低工具链或发布许可证清单。
 
 CI 的 Ubuntu 成功结果不能替代 CentOS 7。提供工作流不等于工作流已经运行。

@@ -12,5 +12,5 @@ command -v cargo >/dev/null || { echo 'BLOCKED: cargo not installed' >&2; exit 2
 command -v readelf >/dev/null || { echo 'BLOCKED: readelf not installed' >&2; exit 2; }
 [[ -f Cargo.lock ]] || cargo generate-lockfile
 cargo build --release --locked --target x86_64-unknown-linux-gnu
-readelf --version-info --wide target/x86_64-unknown-linux-gnu/release/devhub
+readelf --version-info --wide target/x86_64-unknown-linux-gnu/release/agentdock
 printf '%s\n' 'Build finished. Audit GLIBC/GLIBCXX and every shipped .so, then test on a real CentOS 7 host.'

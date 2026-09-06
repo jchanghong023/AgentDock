@@ -144,7 +144,7 @@ impl Store {
             if let Some(s) = p.sessions.iter_mut().find(|s| s.omp_session.as_ref() == Some(&record.file)) {
                 if s.title != record.title || s.last_used != record.modified { s.title = record.title.clone(); s.last_used = record.modified; changed = true; }
             } else {
-                // DevHub IDs identify tabs; the exact OMP identity is the file path.
+                // AgentDock IDs identify tabs; the exact OMP identity is the file path.
                 p.sessions.push(SessionInfo { id: Id::new_v4(), title: record.title.clone(), last_used: record.modified,
                     launch: Launch::omp(profile, false), resume: None, omp_session: Some(record.file.clone()) });
                 changed = true;

@@ -1,4 +1,4 @@
-# DevHub 只读预览示例
+# AgentDock 只读预览示例
 
 本文件用于手工检查 Markdown 显示。此目录不是实际业务工程。
 
@@ -12,7 +12,7 @@
 
 ```rust
 fn main() {
-    println!("Hello, DevHub! 中文显示测试。");
+    println!("Hello, AgentDock! 中文显示测试。");
 }
 ```
 
