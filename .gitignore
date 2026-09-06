@@ -4,3 +4,12 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Generated source archive checksum list
+/MANIFEST.sha256
+
+# Local verification binaries and runtime state
+/verification/*.exe
+/verification/*.pid
+/verification/**/instance.lock
+/verification/**/state.json
