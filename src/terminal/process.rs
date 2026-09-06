@@ -4,13 +4,34 @@ use anyhow::{Context,Result};
 use crossbeam_channel::{bounded,Receiver,Sender};
 use portable_pty::{native_pty_system,Child,CommandBuilder,MasterPty,PtySize};
 use std::{io::{Read,Write},path::Path,time::{Duration,Instant}};
+use std::{pin::Pin,sync::{Arc,atomic::{AtomicBool,Ordering}},task::{Context as TaskContext,Poll}};
+use iced::futures::{Stream,task::AtomicWaker};
 #[derive(Debug)]enum Output{Bytes(Vec<u8>),Eof,Error(String)}
+// One outstanding UI notification per session. Keep it outstanding until the
+// UI drains output, so a busy PTY cannot flood the application message queue.
+#[derive(Default)]struct OutputSignal{scheduled:AtomicBool,ready:AtomicBool,waker:AtomicWaker}
+impl OutputSignal{
+    fn notify(&self){
+        if !self.scheduled.swap(true,Ordering::AcqRel){
+            self.ready.store(true,Ordering::Release);self.waker.wake();
+        }
+    }
+}
 #[derive(Clone)]
-pub(crate) struct OutputWatch { id: uuid::Uuid, queue: Receiver<Output> }
+pub(crate) struct OutputWatch { id: uuid::Uuid, signal:Arc<OutputSignal> }
 impl std::hash::Hash for OutputWatch {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.id.hash(state); }
 }
-impl OutputWatch { pub fn pending(&self) -> bool { !self.queue.is_empty() } }
+impl Stream for OutputWatch{
+    type Item=();
+    fn poll_next(self:Pin<&mut Self>,cx:&mut TaskContext<'_>)->Poll<Option<()>>{
+        self.signal.waker.register(cx.waker());
+        if self.signal.ready.swap(false,Ordering::AcqRel){Poll::Ready(Some(()))}else{Poll::Pending}
+    }
+}
+fn publish(tx:&Sender<Output>,signal:&OutputSignal,output:Output)->bool{
+    if tx.send(output).is_err(){return false;}signal.notify();true
+}
 #[derive(Clone)]struct Input(Sender<Vec<u8>>);
 impl Write for Input{
     fn write(&mut self,b:&[u8])->std::io::Result<usize>{
@@ -20,7 +41,7 @@ impl Write for Input{
 }
 pub struct Session{
     pub engine:Engine,master:Box<dyn MasterPty+Send>,child:Option<Box<dyn Child+Send+Sync>>,
-    output:Receiver<Output>,watch_id:uuid::Uuid,pub exited:Option<String>,pub error:Option<String>,pub unread:bool,
+    output:Receiver<Output>,watch_id:uuid::Uuid,signal:Arc<OutputSignal>,pub exited:Option<String>,pub error:Option<String>,pub unread:bool,
 }
 impl Session{
     pub fn spawn(cwd:&Path,launch:&Launch,settings:&Settings)->Result<Self>{
@@ -31,25 +52,27 @@ impl Session{
         let mut reader=pair.master.try_clone_reader()?;let mut writer=pair.master.take_writer()?;
         let mut child=pair.slave.spawn_command(cmd).with_context(||format!("启动 {}",launch.program))?;drop(pair.slave);
         let(tx,output)=bounded::<Output>(128);let errors_tx=tx.clone();let(input_tx,input_rx)=bounded::<Vec<u8>>(256);
+        let signal=Arc::new(OutputSignal::default());let reader_signal=signal.clone();let writer_signal=signal.clone();
         let reader_thread=std::thread::Builder::new().name("agentdock-pty-read".into()).spawn(move||{
             let mut bytes=[0u8;8192];loop{match reader.read(&mut bytes){
-                Ok(0)=>{let _=tx.send(Output::Eof);break;},
-                Ok(n)=>{if tx.send(Output::Bytes(bytes[..n].to_vec())).is_err(){break;}},
+                Ok(0)=>{publish(&tx,&reader_signal,Output::Eof);break;},
+                Ok(n)=>{if !publish(&tx,&reader_signal,Output::Bytes(bytes[..n].to_vec())){break;}},
                 Err(e)if e.kind()==std::io::ErrorKind::Interrupted=>continue,
-                Err(e)if cfg!(target_os="linux")&&e.raw_os_error()==Some(5)=>{let _=tx.send(Output::Eof);break;},
-                Err(e)=>{let _=tx.send(Output::Error(e.to_string()));break;},
+                Err(e)if cfg!(target_os="linux")&&e.raw_os_error()==Some(5)=>{publish(&tx,&reader_signal,Output::Eof);break;},
+                Err(e)=>{publish(&tx,&reader_signal,Output::Error(e.to_string()));break;},
             }}
         });
         if let Err(e)=reader_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
         let writer_thread=std::thread::Builder::new().name("agentdock-pty-write".into()).spawn(move||{
-            while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){let _=errors_tx.send(Output::Error(e.to_string()));break;}}
+            while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){publish(&errors_tx,&writer_signal,Output::Error(e.to_string()));break;}}
         });
         if let Err(e)=writer_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
-        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx))),master:pair.master,child:Some(child),output,watch_id:uuid::Uuid::new_v4(),exited:None,error:None,unread:false})
+        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx))),master:pair.master,child:Some(child),output,watch_id:uuid::Uuid::new_v4(),signal,exited:None,error:None,unread:false})
     }
     pub fn running(&self)->bool{self.exited.is_none()}
-    pub(crate) fn watch(&self) -> OutputWatch { OutputWatch { id:self.watch_id,queue:self.output.clone() } }
+    pub(crate) fn watch(&self) -> OutputWatch { OutputWatch { id:self.watch_id,signal:self.signal.clone() } }
     pub fn poll(&mut self,budget:usize)->bool{
+        self.signal.scheduled.store(false,Ordering::Release);
         let mut used=0;let mut changed=false;let deadline=Instant::now()+Duration::from_millis(3);
         while used<budget&&Instant::now()<deadline{match self.output.try_recv(){
             Ok(Output::Bytes(b))=>{used+=b.len();self.engine.advance(b);changed=true;self.unread=true;},
@@ -59,7 +82,9 @@ impl Session{
         if self.exited.is_none(){if let Some(child)=&mut self.child{match child.try_wait(){
             Ok(Some(status))=>{self.exited=Some(status.to_string());changed=true;},Ok(None)=>{},
             Err(e)=>{self.error=Some(e.to_string());self.exited=Some("无法读取退出状态".into());changed=true;}
-        }}}changed
+        }}}
+        if !self.output.is_empty(){self.signal.notify();}
+        changed
     }
     pub fn resize(&mut self,cols:usize,rows:usize,width:usize,height:usize)->Result<()>{
         self.master.resize(PtySize{cols:cols.clamp(2,1000)as u16,rows:rows.clamp(1,500)as u16,pixel_width:width.min(u16::MAX as usize)as u16,pixel_height:height.min(u16::MAX as usize)as u16})?;
@@ -79,4 +104,32 @@ pub fn self_test()->Result<()>{
         if text.contains("AGENTDOCK_ECHO:roundtrip-123"){return Ok(());}std::thread::sleep(Duration::from_millis(20));
     }anyhow::bail!("PTY 自测超时：{:?}; error={:?}",s.engine.visible_text(),s.error)
 }
-#[cfg(test)]mod tests{#[test]fn real_pty_io_resize(){super::self_test().unwrap();}}
+#[cfg(test)]mod tests{
+    use super::*;
+    use iced::futures::task::{ArcWake,waker};
+    use std::sync::atomic::AtomicUsize;
+    #[derive(Default)]struct WakeCount(AtomicUsize);
+    impl ArcWake for WakeCount{fn wake_by_ref(this:&Arc<Self>){this.0.fetch_add(1,Ordering::Relaxed);}}
+    #[test]fn output_wakes_immediately_and_coalesces_until_drained(){
+        let signal=Arc::new(OutputSignal::default());
+        let mut watch=OutputWatch{id:uuid::Uuid::new_v4(),signal:signal.clone()};
+        let count=Arc::new(WakeCount::default());let waker=waker(count.clone());
+        let mut cx=TaskContext::from_waker(&waker);
+        assert!(Pin::new(&mut watch).poll_next(&mut cx).is_pending());
+        for _ in 0..1000{signal.notify();}
+        assert_eq!(count.0.load(Ordering::Relaxed),1);
+        assert_eq!(Pin::new(&mut watch).poll_next(&mut cx),Poll::Ready(Some(())));
+        signal.notify(); // A delivered UI message is still outstanding.
+        assert!(Pin::new(&mut watch).poll_next(&mut cx).is_pending());
+        signal.scheduled.store(false,Ordering::Release); // UI begins draining.
+        signal.notify(); // New output, or output left over after the byte budget.
+        assert_eq!(Pin::new(&mut watch).poll_next(&mut cx),Poll::Ready(Some(())));
+    }
+    #[test]fn output_before_subscription_is_not_lost(){
+        let signal=Arc::new(OutputSignal::default());signal.notify();
+        let mut watch=OutputWatch{id:uuid::Uuid::new_v4(),signal};
+        let waker=iced::futures::task::noop_waker();let mut cx=TaskContext::from_waker(&waker);
+        assert_eq!(Pin::new(&mut watch).poll_next(&mut cx),Poll::Ready(Some(())));
+    }
+    #[test]fn real_pty_io_resize(){super::self_test().unwrap();}
+}

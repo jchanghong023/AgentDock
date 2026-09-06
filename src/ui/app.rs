@@ -13,6 +13,7 @@ pub enum RecentKey { Project(Id), Session(Id) }
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
+    TerminalOutput(Id),
     Window(window::Id, window::Event),
     Recent(RecentKey, Click),
     File(TreeRow, Click),
@@ -81,20 +82,19 @@ type SpawnResult = (Id, std::result::Result<Session, String>);
 #[derive(Clone)]
 struct PollWatch {
     started: Instant,
-    outputs: Vec<crate::terminal::process::OutputWatch>,
     files: Receiver<Completed>, spawned: Receiver<SpawnResult>, errors: Receiver<String>,
     heartbeat: Arc<std::sync::Mutex<Instant>>,
 }
 impl std::hash::Hash for PollWatch {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.started.hash(state); self.outputs.hash(state);
+        self.started.hash(state);
     }
 }
 impl PollWatch {
     fn ready(&self, now: Instant) -> bool {
         let mut last = self.heartbeat.lock().unwrap();
         if !self.files.is_empty() || !self.spawned.is_empty() || !self.errors.is_empty()
-            || self.outputs.iter().any(|output| output.pending()) || now.duration_since(*last) >= Duration::from_secs(1) {
+            || now.duration_since(*last) >= Duration::from_secs(1) {
             *last = now; true
         } else { false }
     }
@@ -193,12 +193,17 @@ impl App {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut sessions: Vec<_> = self.sessions.iter().collect();
         sessions.sort_by_key(|(id, _)| **id);
-        let watch = PollWatch { started: self.started, outputs: sessions.iter().map(|(_, session)| session.watch()).collect(),
+        let watch = PollWatch { started: self.started,
             files: self.files.rx.clone(), spawned: self.spawned_rx.clone(), errors: self.persistence.errors.clone(), heartbeat: self.heartbeat.clone() };
-        Subscription::batch([
+        let mut subscriptions=vec![
             iced::time::every(Duration::from_millis(16)).with(watch).filter_map(|(watch, now)| watch.ready(now).then_some(Message::Tick)),
             window::events().map(|(id, event)| Message::Window(id, event)),
-        ])
+        ];
+        // PTY replies wake their own session immediately; housekeeping keeps its timer.
+        for (id,session) in sessions {
+            subscriptions.push(Subscription::run_with(session.watch(),Clone::clone).with(*id).map(|(id,())|Message::TerminalOutput(id)));
+        }
+        Subscription::batch(subscriptions)
     }
     fn notice(&mut self, text: impl Into<String>) { self.notice = Some(text.into()); }
     fn rebuild_recent(&mut self) {
@@ -368,19 +373,7 @@ impl App {
         for n in 0..ids.len() {
             let index = (self.poll_cursor + n) % ids.len();
             let id = ids[index];
-            let session = self.sessions.get_mut(&id).expect("session key collected");
-            let previous_running = session.running(); let previous_unread = session.unread;
-            let output = session.poll(if self.active == Content::Terminal(id) { 64 * 1024 } else { 16 * 1024 });
-            if self.active == Content::Terminal(id) {
-                session.unread = false;
-                if output { self.snapshot = Some((id, session.engine.snapshot())); }
-            }
-            let title: String = session.engine.terminal.get_title().chars().filter(|c| !c.is_control()).take(120).collect();
-            if !title.is_empty() && title != "AgentDock" && title != "wezterm" && self.store.session(id).is_some_and(|(_, s)| s.title != title) {
-                self.store.title(id, &title); self.dirty = true; changed = true;
-            }
-            if previous_running != session.running() || previous_unread != session.unread { changed = true; }
-            if let Some(error) = session.error.take() { self.notice = Some(format!("终端 I/O：{error}")); }
+            changed |= self.poll_session(id);
             if Instant::now() >= deadline { self.poll_cursor = (index + 1) % ids.len(); break; }
         }
         if changed { self.rebuild_recent(); }
@@ -391,9 +384,26 @@ impl App {
         }
         Task::none()
     }
+    fn poll_session(&mut self,id:Id)->bool {
+        let Some(session)=self.sessions.get_mut(&id)else{return false;};
+        let previous_running=session.running();let previous_unread=session.unread;
+        let output=session.poll(if self.active==Content::Terminal(id){64*1024}else{16*1024});
+        if self.active==Content::Terminal(id){
+            session.unread=false;
+            if output{self.snapshot=Some((id,session.engine.snapshot()));}
+        }
+        let mut changed=previous_running!=session.running()||previous_unread!=session.unread;
+        let title:String=session.engine.terminal.get_title().chars().filter(|c|!c.is_control()).take(120).collect();
+        if !title.is_empty()&&title!="AgentDock"&&title!="wezterm"&&self.store.session(id).is_some_and(|(_,s)|s.title!=title){
+            self.store.title(id,&title);self.dirty=true;changed=true;
+        }
+        if let Some(error)=session.error.take(){self.notice=Some(format!("终端 I/O：{error}"));}
+        changed
+    }
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Tick => return self.tick(),
+            Message::TerminalOutput(id) => { if self.poll_session(id){self.rebuild_recent();} }
             Message::Window(id, event) => {
                 self.window = Some(id);
                 match event {
@@ -623,7 +633,7 @@ mod tests {
         let (file_tx, files) = bounded(2);
         let (_spawn_tx, spawned) = bounded(2);
         let (_error_tx, errors) = bounded(2);
-        let watch = PollWatch { started: now, outputs: vec![], files, spawned, errors, heartbeat: Arc::new(std::sync::Mutex::new(now)) };
+        let watch = PollWatch { started: now, files, spawned, errors, heartbeat: Arc::new(std::sync::Mutex::new(now)) };
         for millis in (16..1000).step_by(16) { assert!(!watch.ready(now + Duration::from_millis(millis))); }
         assert!(watch.ready(now + Duration::from_secs(1)));
         file_tx.send(Completed::Roots(vec![])).unwrap();

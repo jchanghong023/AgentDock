@@ -6,7 +6,7 @@ use iced::advanced::text::Paragraph as _;
 use iced::advanced::renderer::Renderer as _;
 use iced::{Color,Element,Event,Font,Length,Pixels,Point,Rectangle,Renderer,Size,Theme,keyboard,mouse,window};
 use iced::advanced::input_method::{self,InputMethod,Preedit,Purpose};
-use std::time::{Duration,Instant};
+use std::{cell::RefCell,sync::Arc,time::{Duration,Instant}};
 use wezterm_term::{MouseButton,MouseEvent,MouseEventKind,KeyCode};
 
 pub struct TerminalView<'a,M>{id:Id,snapshot:&'a Snapshot,font:Font,size:f32,serial:u64,allow_input:bool,on:Box<dyn Fn(Action)->M+'a>}
@@ -16,8 +16,23 @@ struct State{
     font_key:(Font,u32),grid:(usize,usize),generation:usize,preedit:Option<Preedit>,composing:bool,
     dragging:bool,button:MouseButton,click:Option<(Instant,usize,usize,u8)>,
     blink_at:Instant,blink:bool,suppressed:Vec<KeyCode>,
+    draw_rows:RefCell<Vec<CachedRow>>,wheel_remainder:f32,
 }
-impl Default for State{fn default()->Self{Self{id:None,serial:0,focused:true,modifiers:Default::default(),width:9.0,height:21.0,font_key:(Font::MONOSPACE,0),grid:(0,0),generation:usize::MAX,preedit:None,composing:false,dragging:false,button:MouseButton::None,click:None,blink_at:Instant::now(),blink:true,suppressed:vec![]}}}
+impl Default for State{fn default()->Self{Self{id:None,serial:0,focused:true,modifiers:Default::default(),width:9.0,height:21.0,font_key:(Font::MONOSPACE,0),grid:(0,0),generation:usize::MAX,preedit:None,composing:false,dragging:false,button:MouseButton::None,click:None,blink_at:Instant::now(),blink:true,suppressed:vec![],draw_rows:RefCell::default(),wheel_remainder:0.0}}}
+struct DrawRun{start:usize,end:usize,content:String}
+struct CachedRow{cells:Arc<Vec<crate::terminal::engine::Cell>>,runs:Vec<DrawRun>}
+impl CachedRow{
+    fn new(cells:&Arc<Vec<crate::terminal::engine::Cell>>)->Self{
+        let mut runs=Vec::new();let mut start=0;
+        while start<cells.len(){let end=run_end(cells,start);runs.push(DrawRun{start,end,content:cells[start..end].iter().map(|c|c.text.as_str()).collect()});start=end;}
+        Self{cells:Arc::clone(cells),runs}
+    }
+}
+fn wheel_rows(remainder:&mut f32,value:f32)->i32{
+    if value==0.0{return 0;}
+    if remainder.signum()!=value.signum(){*remainder=0.0;}
+    *remainder+=value;let rows=remainder.trunc()as i32;*remainder-=rows as f32;rows
+}
 fn area(b:Rectangle)->Rectangle{Rectangle{x:b.x+10.0,y:b.y+10.0,width:(b.width-28.0).max(1.0),height:(b.height-20.0).max(1.0)}}
 fn location(s:&State,a:Rectangle,p:Point,v:&Snapshot)->(usize,usize){
     ((((p.x-a.x).max(0.0)/s.width)as usize).min(v.columns.saturating_sub(1)),(((p.y-a.y).max(0.0)/s.height)as usize).min(v.rows.saturating_sub(1)))
@@ -122,7 +137,8 @@ impl<M>Widget<M,Theme,Renderer> for TerminalView<'_,M>{
             }
             Event::Mouse(mouse::Event::WheelScrolled{delta})if cursor.is_over(bounds)=>{
                 let value=match delta{mouse::ScrollDelta::Lines{y,..}=>*y*3.0,mouse::ScrollDelta::Pixels{y,..}=>*y/s.height};
-                let rows=if value.abs()<1.0{value.signum()as i32}else{value as i32};
+                let rows=wheel_rows(&mut s.wheel_remainder,value);
+                if rows==0{shell.capture_event();return;}
                 if(self.snapshot.mouse_grabbed||self.snapshot.alternate)&&!s.modifiers.shift(){if let Some(p)=cursor.position(){let button=if rows>=0{MouseButton::WheelUp(rows.unsigned_abs()as usize)}else{MouseButton::WheelDown(rows.unsigned_abs()as usize)};send!(mouse_action(s,a,p,self.snapshot,MouseEventKind::Press,button));}}
                 else{send!(Action::Scroll(rows));}
             }
@@ -134,15 +150,16 @@ impl<M>Widget<M,Theme,Renderer> for TerminalView<'_,M>{
         let s=tree.state.downcast_ref::<State>();let b=layout.bounds();let a=area(b);let Some(clip)=a.intersection(viewport)else{return};
         paint::rect(r,b,paint::rgba(self.snapshot.background));
         r.start_layer(clip);
+        let mut draw_rows=s.draw_rows.borrow_mut();
+        draw_rows.truncate(self.snapshot.lines.len());
         for(row,cells)in self.snapshot.lines.iter().enumerate(){
             let y=a.y+row as f32*s.height;if y>=a.y+a.height{break;}
-            let mut index = 0;
-            while index < cells.len() {
-                let cell = &cells[index];
-                let end = run_end(cells, index);
-                let last = &cells[end - 1];
-                let content: String = cells[index..end].iter().map(|cell| cell.text.as_str()).collect();
-                index = end;
+            if row==draw_rows.len(){draw_rows.push(CachedRow::new(cells));}
+            else if !Arc::ptr_eq(&draw_rows[row].cells,cells){draw_rows[row]=CachedRow::new(cells);}
+            for run in &draw_rows[row].runs {
+                let cell = &cells[run.start];
+                let last = &cells[run.end - 1];
+                let content = &run.content;
                 let bounds=Rectangle{x:a.x+cell.column as f32*s.width,y,width:(last.column + last.width - cell.column) as f32*s.width,height:s.height};
                 let Some(crop)=bounds.intersection(&clip)else{continue};
                 if cell.selected || cell.bg != self.snapshot.background { paint::rect(r,crop,if cell.selected{Color::from_rgb8(51,78,111)}else{paint::rgba(cell.bg)}); }
@@ -176,6 +193,16 @@ impl<'a,M:'a>From<TerminalView<'a,M>>for Element<'a,M>{fn from(value:TerminalVie
 mod tests {
     use super::*;
     use crate::{model::Settings, terminal::Engine};
+    #[test]
+    fn small_wheel_deltas_accumulate_without_amplification(){
+        let mut remainder=0.0;
+        for _ in 0..3{assert_eq!(wheel_rows(&mut remainder,0.25),0);}
+        assert_eq!(wheel_rows(&mut remainder,0.25),1);
+        assert_eq!(wheel_rows(&mut remainder,0.75),0);
+        assert_eq!(wheel_rows(&mut remainder,-0.5),0);
+        assert_eq!(wheel_rows(&mut remainder,-0.5),-1);
+        assert_eq!(wheel_rows(&mut remainder,3.0),3);
+    }
     #[test]
     fn batches_ascii_but_preserves_color_selection_and_wide_cells() {
         let mut engine = Engine::new(&Settings::default(), Box::new(std::io::sink()));
