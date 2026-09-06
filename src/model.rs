@@ -137,9 +137,10 @@ impl Store {
     pub fn import_omp(&mut self, records: &[crate::omp::Record], profile: Option<&str>) -> bool {
         let mut changed = false;
         for record in records {
+            let existed = self.projects.iter().any(|p| p.path == record.cwd);
             let project = self.ensure_project(record.cwd.clone());
             let p = self.project_mut(project).unwrap();
-            p.last_used = p.last_used.max(record.modified);
+            p.last_used = if existed { p.last_used.max(record.modified) } else { record.modified };
             if let Some(s) = p.sessions.iter_mut().find(|s| s.omp_session.as_ref() == Some(&record.file)) {
                 if s.title != record.title || s.last_used != record.modified { s.title = record.title.clone(); s.last_used = record.modified; changed = true; }
             } else {
@@ -177,5 +178,19 @@ impl Store {
         assert_eq!(store.session(id).unwrap().1.launch, Launch { program: "omp".into(), args: vec!["-c".into(), "--profile".into(), "work space".into()] });
         store.continue_omp(id, Some("other"));
         assert_eq!(store.session(id).unwrap().1.launch.args, ["-c", "--profile", "other"]);
+    }
+    #[test] fn selected_history_uses_exact_file_not_latest() {
+        let mut store = Store::default();
+        let cwd = PathBuf::from("project");
+        let records: Vec<_> = ["first.jsonl", "second.jsonl"].into_iter().map(|file| crate::omp::Record {
+            id: Id::new_v4(), file: PathBuf::from(file), cwd: cwd.clone(), title: file.into(), modified: 10,
+        }).collect();
+        assert!(store.import_omp(&records, Some("work")));
+        assert!(!store.import_omp(&records, Some("work")));
+        let id = store.projects[0].sessions.iter().find(|s| s.omp_session.as_ref() == Some(&records[0].file)).unwrap().id;
+        store.continue_omp(id, None);
+        let launch = &store.session(id).unwrap().1.launch;
+        assert_eq!(launch.args, ["--profile", "work", "--resume", "first.jsonl"]);
+        assert!(!launch.args.iter().any(|arg| arg == "-c"));
     }
 }

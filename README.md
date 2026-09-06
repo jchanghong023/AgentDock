@@ -104,7 +104,7 @@ bash scripts/gui-smoke.sh
 直接启动 OMP，不重新实现它的聊天 UI：
 
 ```bash
-cargo run --locked -- --project /absolute/project --command omp
+cargo run --release --locked -- --project /absolute/project --profile work
 ```
 
 参数必须各自传入，不拼接成 shell 语句：
@@ -113,7 +113,8 @@ cargo run --locked -- --project /absolute/project --command omp
 cargo run --locked -- --project /absolute/project --command python --arg -i
 ```
 
-默认启动当前平台交互 Shell；在其中运行 OMP、Codex 或其他 TUI。应用不包含
+默认直接启动 OMP Agent；`--profile NAME` 或 `--profile=NAME` 传给 OMP。未指定时
+遵循 `OMP_PROFILE` / `PI_PROFILE`，否则使用默认 profile。应用不包含
 这些 Agent，不代理它们的 API，不提供额度或登录功能。传给 `--command` 的
 命令必须在本机可执行；Windows 的 `.ps1/.cmd` 脚本需显式选择其解释器。
 
@@ -125,23 +126,18 @@ cargo run --locked -- --open examples/README.md
 
 ## 会话持久化的准确含义
 
-程序保存项目、星标、会话名、命令及可选的恢复命令。**不保存或伪造 Agent
-聊天内容，不扫描任何 Agent 的私有历史目录，也不在 GUI 退出后保活进程。**
+左侧“会话”读取当前 OMP profile 的真实 JSONL 历史，按头部工作目录分组。
+只读取标题和会话头部，不加载聊天正文或认证配置。后台每 5 秒检查元数据变化，
+未变化的文件使用缓存。默认路径为 `~/.omp/agent/sessions`；命名 profile 使用
+`~/.omp/profiles/NAME/agent/sessions`，并支持 OMP 的目录环境变量。
 
-重新打开已经结束的历史会话会要求确认：配置了 `resume` 则执行该命令；否则
-重新启动原命令，明确提示不会恢复旧聊天。Agent 各自的历史格式与恢复参数并不
-统一，不能仅靠 PTY 自动恢复。`resume` 示例结构如下，实际参数按 Agent 文档确定：
+单击未运行的历史只选中；双击在其工作目录执行
+`omp --profile NAME --resume /完整路径/所选会话.jsonl`，恢复所选记录。
+这里采用用户确认后的“精确恢复”，不使用只会继续最近一条的 `omp -c`。
+已经运行的标签直接切换，不重复启动 OMP。`+` 启动新的 OMP Agent 会话。
+旧版普通 Shell 的占位历史不会再冒充 OMP 历史。
 
-```json
-{
-  "program": "your-agent-executable",
-  "args": ["the-real-resume-option", "the-real-session-id"]
-}
-```
-
-修改前先退出程序并备份 `state.json`，把该对象填入相应 session 的 `resume`。
-这只是结构示例，不是 OMP 的恢复命令。完整状态初始结构在
-[examples/state.example.json](examples/state.example.json)。
+DevHub 保存项目、星标和历史文件引用；聊天记录仍由 OMP 保存。退出 GUI 不保活进程。
 
 默认状态路径：Windows `%LOCALAPPDATA%\DevHub`；Linux
 `${XDG_STATE_HOME:-$HOME/.local/state}/devhub`。也可用 `DEVHUB_HOME` 或 `--state-dir`。

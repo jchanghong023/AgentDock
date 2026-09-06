@@ -23,10 +23,10 @@ pub fn session_root(profile: Option<&str>) -> PathBuf {
         if let Some(root) = std::env::var_os("PI_CODING_AGENT_DIR").filter(|v| !v.is_empty()) { return PathBuf::from(root).join("sessions"); }
     }
     #[cfg(unix)]
-    if let Some(root) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
+    if let Some(root) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
         let root = PathBuf::from(root).join("omp");
         let root = if let Some(profile) = profile { root.join("profiles").join(profile) } else { root };
-        if root.is_dir() { return root.join("agent/sessions"); }
+        if root.is_dir() { return root.join("sessions"); }
     }
     config.join("agent/sessions")
 }

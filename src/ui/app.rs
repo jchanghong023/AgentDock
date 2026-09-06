@@ -295,6 +295,9 @@ impl App {
             self.focus(Content::Terminal(id));
             return;
         }
+        if self.store.session(id).and_then(|(_, session)| session.omp_session.as_ref()).is_some_and(|file| !file.is_file()) {
+            self.notice("所选 OMP 会话文件已不存在，未启动其他会话。"); return;
+        }
         self.store.continue_omp(id, Some(self.omp_profile.as_deref().unwrap_or("default")));
         self.dirty = true;
         self.start_session(id);
@@ -452,7 +455,10 @@ impl App {
                 if self.sessions.contains_key(&id) || self.spawning.contains(&id) { self.focus(Content::Terminal(id)); }
                 else { self.confirmation = Some(Confirmation::Restart(id)); }
             }
-            Message::Restart(id) => self.confirmation = Some(Confirmation::Restart(id)),
+            Message::Restart(id) => {
+                if self.store.session(id).is_some_and(|(_, session)| session.omp_session.is_some()) { self.continue_session(id); }
+                else { self.confirmation = Some(Confirmation::Restart(id)); }
+            },
             Message::CloseSession(id) => {
                 if self.sessions.get(&id).is_some_and(Session::running) || self.spawning.contains(&id) { self.confirmation = Some(Confirmation::Stop(id)); }
                 else { self.close_session(id); }
