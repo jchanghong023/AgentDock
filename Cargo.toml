@@ -1,0 +1,37 @@
+[package]
+name = "devhub"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Native terminal-first workspace with projects, sessions and a lazy file tree"
+
+[dependencies]
+# Explicit CPU renderer. Do not silently enable wgpu, OpenGL or Wayland.
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "x11", "advanced", "advanced-shaping", "markdown", "tokio"] }
+# Upstream terminal core, not an import of the user's custom WezTerm fork.
+wezterm-term = { git = "https://github.com/wezterm/wezterm.git", rev = "5046fc22" }
+termwiz = { git = "https://github.com/wezterm/wezterm.git", rev = "5046fc22" }
+portable-pty = "=0.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+# Software rendering and font shaping remain fast during `cargo run` too;
+# application code still keeps normal debug checks and debuggability.
+[profile.dev.package."*"]
+opt-level = 2
+
+[lints.rust]
+unsafe_code = "forbid"

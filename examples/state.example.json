@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "settings": {
+    "font_family": "monospace",
+    "font_size": 15.0,
+    "scrollback_lines": 10000,
+    "sidebar_width": 278.0,
+    "recent_fraction": 0.45,
+    "default_launch": {"program": "", "args": []},
+    "directory_page_size": 256,
+    "preview_limit_bytes": 2097152
+  },
+  "projects": []
+}

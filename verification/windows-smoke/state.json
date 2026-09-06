@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "settings": {
+    "font_family": "Consolas",
+    "font_size": 15.0,
+    "scrollback_lines": 10000,
+    "sidebar_width": 278.0,
+    "recent_fraction": 0.45,
+    "default_launch": {
+      "program": "",
+      "args": []
+    },
+    "directory_page_size": 256,
+    "preview_limit_bytes": 2097152
+  },
+  "projects": [
+    {
+      "id": "c6cca659-d3bd-4ea3-82cf-946ad9922dcd",
+      "path": "D:\\code1111111111\\devhub-source-0.1.0\\devhub",
+      "pinned": false,
+      "last_used": 1788732366,
+      "expanded": true,
+      "sessions": []
+    }
+  ]
+}

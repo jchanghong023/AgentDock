@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "settings": {
+    "font_family": "Consolas",
+    "font_size": 15.0,
+    "scrollback_lines": 10000,
+    "sidebar_width": 278.0,
+    "recent_fraction": 0.45,
+    "default_launch": {
+      "program": "",
+      "args": []
+    },
+    "directory_page_size": 256,
+    "preview_limit_bytes": 2097152
+  },
+  "projects": [
+    {
+      "id": "95a39ce3-7e04-4d40-a834-374c96467792",
+      "path": "D:\\code1111111111\\devhub-source-0.1.0\\devhub",
+      "pinned": false,
+      "last_used": 1788733067,
+      "expanded": true,
+      "sessions": [
+        {
+          "id": "2d92b4c3-4f19-40ef-9e69-b684e66a0286",
+          "title": "会话 1",
+          "last_used": 1788733067,
+          "launch": {
+            "program": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "args": [
+              "-NoLogo",
+              "-NoProfile",
+              "-File",
+              "verification/terminal-load.ps1"
+            ]
+          },
+          "resume": null
+        }
+      ]
+    }
+  ]
+}

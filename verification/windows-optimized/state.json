@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "settings": {
+    "font_family": "Consolas",
+    "font_size": 15.0,
+    "scrollback_lines": 10000,
+    "sidebar_width": 278.0,
+    "recent_fraction": 0.45,
+    "default_launch": {
+      "program": "",
+      "args": []
+    },
+    "directory_page_size": 256,
+    "preview_limit_bytes": 2097152
+  },
+  "projects": [
+    {
+      "id": "27617167-a856-49c4-b01f-d475ee893835",
+      "path": "D:\\code1111111111\\devhub-source-0.1.0\\devhub",
+      "pinned": false,
+      "last_used": 1788733948,
+      "expanded": true,
+      "sessions": [
+        {
+          "id": "18bf471e-cfa6-4db7-b6b9-efc6b3f9d708",
+          "title": "会话 2",
+          "last_used": 1788733948,
+          "launch": {
+            "program": "",
+            "args": []
+          },
+          "resume": null
+        },
+        {
+          "id": "5cb8717f-ceba-4cbf-8d4b-993e6188e614",
+          "title": "会话 1",
+          "last_used": 1788733403,
+          "launch": {
+            "program": "",
+            "args": []
+          },
+          "resume": null
+        }
+      ]
+    },
+    {
+      "id": "c471adb9-8381-4023-be42-54954c0a83da",
+      "path": "C:\\Users",
+      "pinned": true,
+      "last_used": 1788733403,
+      "expanded": false,
+      "sessions": [
+        {
+          "id": "12b1b1c3-be73-4fc1-a413-f68095e382f1",
+          "title": "会话 1",
+          "last_used": 1788733403,
+          "launch": {
+            "program": "",
+            "args": []
+          },
+          "resume": null
+        }
+      ]
+    }
+  ]
+}

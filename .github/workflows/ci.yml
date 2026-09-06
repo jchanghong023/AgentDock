@@ -1,0 +1,47 @@
+name: Build and test
+'on':
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Linux build and display libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config clang \
+            libx11-dev libx11-xcb-dev libxcb-shm0-dev libxcb-render0-dev \
+            libxi-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev \
+            libssl-dev zlib1g-dev xvfb xauth fonts-noto-cjk
+      - name: Rust formatting, compilation, tests and PTY
+        if: runner.os == 'Linux'
+        run: bash scripts/verify.sh
+      - name: Rust formatting, compilation, tests and PTY
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify.ps1
+      - name: Linux GUI event-loop smoke
+        if: runner.os == 'Linux'
+        run: bash scripts/gui-smoke.sh
+      - name: Retain resolved dependency lock
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lock-${{ matrix.os }}
+          path: Cargo.lock
+          if-no-files-found: ignore
+# This workflow is supplied, not executed in the source-generation environment.
+# Ubuntu 22.04 success would NOT be a CentOS 7 compatibility result.

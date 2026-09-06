@@ -1,0 +1,35 @@
+{
+  "overall_status": "SOURCE_DELIVERED_RUNTIME_VALIDATION_BLOCKED",
+  "source_checks": {
+    "passed": 53,
+    "failed": 0,
+    "skipped": 0
+  },
+  "python_helper_tests": {
+    "executed": 11,
+    "passed": 11,
+    "failed": 0,
+    "scope": "Verification and packaging helper tools only; not Rust application tests"
+  },
+  "rust": {
+    "source_files": 17,
+    "unit_test_declarations": 38,
+    "compilation": "BLOCKED_NO_TOOLCHAIN",
+    "tests": "NOT_RUN",
+    "rustfmt": "NOT_RUN",
+    "clippy": "NOT_RUN",
+    "cargo_lock": "NOT_GENERATED"
+  },
+  "gui": "NOT_RUN_NO_BINARY",
+  "windows": "NOT_RUN",
+  "centos7": "NOT_RUN",
+  "toolchain_download": {
+    "exit_code": 6,
+    "reason": "DNS resolution failed for static.rust-lang.org"
+  },
+  "limitations": [
+    "No executable or dependency vendor tree supplied.",
+    "The custom WezTerm fork was not supplied or imported.",
+    "Terminal widget behavior and performance require real runtime validation."
+  ]
+}
