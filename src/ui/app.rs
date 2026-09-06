@@ -215,7 +215,7 @@ impl App {
                             if session.unread && self.active != Content::Terminal(s.id) { "● " }
                             else if session.running() { "› " } else { "○ " }
                         } else { "  " };
-                    rows.push(Row { key: RecentKey::Session(s.id), label: format!("{prefix}session: {}", s.title),
+                    rows.push(Row { key: RecentKey::Session(s.id), label: format!("{prefix}{}", s.title),
                         depth: 1, folder: false, expanded: false, selected: self.selected_session == Some(s.id),
                         star: None, add: false, muted: !self.sessions.contains_key(&s.id) });
                 }
@@ -586,11 +586,11 @@ impl App {
         let mut tabs = iced::widget::Row::new().spacing(4).align_y(iced::Alignment::Center);
         for id in &self.tabs {
             let title = self.store.session(*id).map(|(_, s)| s.title.chars().take(20).collect::<String>()).unwrap_or_else(|| "终端".into());
-            let label = format!(">_  session: {title}");
-            tabs = tabs.push(row![button(text(label).font(style::bold()).size(12)).padding([7, 12]).style(style::tab(self.active == Content::Terminal(*id))).on_press(Message::Activate(*id)), button(text("×").size(16)).on_press(Message::CloseSession(*id)).style(style::subtle)].spacing(0));
+            let label = format!(">_  {title}");
+            tabs = tabs.push(container(row![button(text(label).font(style::bold()).size(12)).padding([7, 12]).style(style::tab_title).on_press(Message::Activate(*id)), button(text("×").size(16)).padding([3, 8]).on_press(Message::CloseSession(*id)).style(style::subtle)].spacing(0).align_y(iced::Alignment::Center)).padding(1).style(style::tab_group(self.active == Content::Terminal(*id))));
         }
         if let Some(document) = &self.document {
-            tabs = tabs.push(row![button(text(format!("▤  {}", paths::name(&document.preview.path))).font(style::bold()).size(12)).padding([7, 12]).style(style::tab(self.active == Content::Preview)).on_press(Message::ShowPreview), button("×").on_press(Message::ClosePreview).style(style::subtle)]);
+            tabs = tabs.push(container(row![button(text(format!("▤  {}", paths::name(&document.preview.path))).font(style::bold()).size(12)).padding([7, 12]).style(style::tab_title).on_press(Message::ShowPreview), button(text("×").size(16)).padding([3, 8]).on_press(Message::ClosePreview).style(style::subtle)].spacing(0).align_y(iced::Alignment::Center)).padding(1).style(style::tab_group(self.active == Content::Preview)));
         }
         if self.tabs.is_empty() && self.document.is_none() { tabs = tabs.push(text("终端 / 文件预览").size(13)); }
         tabs = tabs.push(button(text("+").size(19)).padding([2, 12]).style(style::tab(false)).on_press(Message::NewSelected));

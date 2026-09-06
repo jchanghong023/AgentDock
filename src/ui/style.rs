@@ -46,3 +46,14 @@ pub fn subtle(_: &Theme, status: button::Status) -> button::Style {
         background: matches!(status, button::Status::Hovered).then_some(Color::from_rgb8(225, 239, 253).into()),
         border: Border { radius: 4.0.into(), ..Default::default() }, ..Default::default() }
 }
+pub fn tab_group(active: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(if active { Color::WHITE } else { SURFACE }.into()),
+        text_color: Some(INK),
+        border: Border { color: LINE, width: 1.0, radius: 5.0.into() },
+        ..Default::default()
+    }
+}
+pub fn tab_title(theme: &Theme, status: button::Status) -> button::Style {
+    button::Style { text_color: INK, ..subtle(theme, status) }
+}
