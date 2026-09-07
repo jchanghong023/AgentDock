@@ -35,13 +35,15 @@ fn publish(tx:&Sender<Output>,signal:&OutputSignal,output:Output)->bool{
 #[derive(Clone)]struct Input(Sender<Vec<u8>>);
 impl Write for Input{
     fn write(&mut self,b:&[u8])->std::io::Result<usize>{
-        self.0.try_send(b.to_vec()).map_err(|e|std::io::Error::new(std::io::ErrorKind::WouldBlock,e.to_string()))?;Ok(b.len())
+        // Called by WezTerm's dedicated ThreadedWriter, never by the UI.
+        // Temporary backpressure must not terminate that upstream writer.
+        self.0.send(b.to_vec()).map_err(|_|std::io::Error::new(std::io::ErrorKind::BrokenPipe,"PTY writer disconnected"))?;Ok(b.len())
     }
     fn flush(&mut self)->std::io::Result<()>{Ok(())}
 }
 pub struct Session{
     pub engine:Engine,master:Box<dyn MasterPty+Send>,child:Option<Box<dyn Child+Send+Sync>>,
-    output:Receiver<Output>,watch_id:uuid::Uuid,signal:Arc<OutputSignal>,pub exited:Option<String>,pub error:Option<String>,pub unread:bool,
+    output:Receiver<Output>,size:(usize,usize,usize,usize),watch_id:uuid::Uuid,signal:Arc<OutputSignal>,pub exited:Option<String>,pub error:Option<String>,pub unread:bool,
 }
 impl Session{
     pub fn spawn(cwd:&Path,launch:&Launch,settings:&Settings)->Result<Self>{
@@ -67,7 +69,7 @@ impl Session{
             while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){publish(&errors_tx,&writer_signal,Output::Error(e.to_string()));break;}}
         });
         if let Err(e)=writer_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
-        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx))),master:pair.master,child:Some(child),output,watch_id:uuid::Uuid::new_v4(),signal,exited:None,error:None,unread:false})
+        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx))),master:pair.master,child:Some(child),output,size:(80,24,0,0),watch_id:uuid::Uuid::new_v4(),signal,exited:None,error:None,unread:false})
     }
     pub fn running(&self)->bool{self.exited.is_none()}
     pub(crate) fn watch(&self) -> OutputWatch { OutputWatch { id:self.watch_id,signal:self.signal.clone() } }
@@ -87,8 +89,10 @@ impl Session{
         changed
     }
     pub fn resize(&mut self,cols:usize,rows:usize,width:usize,height:usize)->Result<()>{
+        let(cols,rows,width,height)=(cols.clamp(2,1000),rows.clamp(1,500),width.min(u16::MAX as usize),height.min(u16::MAX as usize));
+        if self.size==(cols,rows,width,height){return Ok(());}
         self.master.resize(PtySize{cols:cols.clamp(2,1000)as u16,rows:rows.clamp(1,500)as u16,pixel_width:width.min(u16::MAX as usize)as u16,pixel_height:height.min(u16::MAX as usize)as u16})?;
-        self.engine.resize(cols,rows,width,height);Ok(())
+        self.engine.resize(cols,rows,width,height);self.size=(cols,rows,width,height);Ok(())
     }
 }
 impl Drop for Session{
@@ -132,4 +136,42 @@ pub fn self_test()->Result<()>{
         assert_eq!(Pin::new(&mut watch).poll_next(&mut cx),Poll::Ready(Some(())));
     }
     #[test]fn real_pty_io_resize(){super::self_test().unwrap();}
+    #[test]fn input_backpressure_recovers_without_losing_bytes(){
+        let(tx,rx)=bounded(2);let mut input=Input(tx);
+        input.write_all(b"first").unwrap();input.write_all(b"second").unwrap();
+        let(done_tx,done_rx)=bounded(1);
+        let worker=std::thread::spawn(move||{
+            input.write_all(b"third").unwrap();input.write_all(b"fourth").unwrap();done_tx.send(()).unwrap();
+        });
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        for expected in [b"first".as_slice(),b"second",b"third",b"fourth"]{
+            assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(),expected);
+        }
+        done_rx.recv_timeout(Duration::from_secs(2)).unwrap();worker.join().unwrap();
+    }
+    #[test]fn disconnected_input_reports_broken_pipe(){
+        let(tx,rx)=bounded(1);drop(rx);
+        assert_eq!(Input(tx).write(b"x").unwrap_err().kind(),std::io::ErrorKind::BrokenPipe);
+    }
+    #[test]fn core_writer_continues_after_full_queue(){
+        let(tx,rx)=bounded(2);let mut engine=Engine::new(&Settings::default(),Box::new(Input(tx)));
+        for _ in 0..100{engine.paste("中文-input").unwrap();}
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while rx.len()<2&&Instant::now()<deadline{std::thread::yield_now();}
+        assert_eq!(rx.len(),2);
+        std::thread::sleep(Duration::from_millis(50));
+        let expected="中文-input".repeat(100).into_bytes();let mut actual=Vec::new();
+        while actual.len()<expected.len(){actual.extend(rx.recv_timeout(Duration::from_secs(2)).unwrap());}
+        assert_eq!(actual,expected);
+        engine.paste("still-alive").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(),b"still-alive");
+    }
+    #[test]fn repeated_resize_preserves_generation_and_selection(){
+        let mut s=Session::spawn(&std::env::current_dir().unwrap(),&Launch::default(),&Settings::default()).unwrap();
+        s.resize(90,20,900,400).unwrap();s.engine.advance("中文");
+        s.engine.select(0,0,super::super::engine::SelectionMode::Character);
+        let generation=s.engine.generation();let selection=s.engine.selection_text();
+        s.resize(90,20,900,400).unwrap();assert_eq!(s.engine.generation(),generation);
+        assert_eq!(s.engine.selection_text(),selection);
+    }
 }

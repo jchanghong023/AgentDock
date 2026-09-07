@@ -25,6 +25,7 @@ tempfile = "3"
 
 [patch.crates-io]
 winit = { path = "vendor/winit" }
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
 [profile.release]
 lto = "thin"

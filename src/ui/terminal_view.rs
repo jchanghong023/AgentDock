@@ -28,6 +28,12 @@ impl CachedRow{
         Self{cells:Arc::clone(cells),runs}
     }
 }
+fn sync_draw_rows(rows:&mut Vec<CachedRow>,lines:&[Arc<Vec<crate::terminal::engine::Cell>>]){
+    if rows.len()==lines.len()&&rows.iter().zip(lines).all(|(row,cells)|Arc::ptr_eq(&row.cells,cells)){return;}
+    // Content identity survives scrolling; screen position does not.
+    let mut previous:std::collections::HashMap<_,_>=rows.drain(..).map(|row|(Arc::as_ptr(&row.cells),row)).collect();
+    rows.extend(lines.iter().map(|cells|previous.remove(&Arc::as_ptr(cells)).unwrap_or_else(||CachedRow::new(cells))));
+}
 fn wheel_rows(remainder:&mut f32,value:f32)->i32{
     if value==0.0{return 0;}
     if remainder.signum()!=value.signum(){*remainder=0.0;}
@@ -151,11 +157,9 @@ impl<M>Widget<M,Theme,Renderer> for TerminalView<'_,M>{
         paint::rect(r,b,paint::rgba(self.snapshot.background));
         r.start_layer(clip);
         let mut draw_rows=s.draw_rows.borrow_mut();
-        draw_rows.truncate(self.snapshot.lines.len());
+        sync_draw_rows(&mut draw_rows,&self.snapshot.lines);
         for(row,cells)in self.snapshot.lines.iter().enumerate(){
             let y=a.y+row as f32*s.height;if y>=a.y+a.height{break;}
-            if row==draw_rows.len(){draw_rows.push(CachedRow::new(cells));}
-            else if !Arc::ptr_eq(&draw_rows[row].cells,cells){draw_rows[row]=CachedRow::new(cells);}
             for run in &draw_rows[row].runs {
                 let cell = &cells[run.start];
                 let last = &cells[run.end - 1];
@@ -193,6 +197,15 @@ impl<'a,M:'a>From<TerminalView<'a,M>>for Element<'a,M>{fn from(value:TerminalVie
 mod tests {
     use super::*;
     use crate::{model::Settings, terminal::Engine};
+    #[test]fn scrolling_reuses_draw_runs(){
+        let mut engine=Engine::new(&Settings::default(),Box::new(std::io::sink()));
+        engine.resize(20,4,200,80);engine.advance("first\r\nsecond\r\nthird\r\nfourth");
+        let snapshot=engine.snapshot();let mut rows=Vec::new();sync_draw_rows(&mut rows,&snapshot.lines);
+        let allocation=rows[1].runs.as_ptr();
+        let mut scrolled=snapshot.lines[1..].to_vec();scrolled.push(Arc::new(vec![]));
+        sync_draw_rows(&mut rows,&scrolled);assert_eq!(rows[0].runs.as_ptr(),allocation);
+        assert_eq!(rows.len(),4);
+    }
     #[test]
     fn small_wheel_deltas_accumulate_without_amplification(){
         let mut remainder=0.0;

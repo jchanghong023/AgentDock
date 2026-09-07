@@ -135,22 +135,37 @@ impl Store {
         }
     }
     pub fn import_omp(&mut self, records: &[crate::omp::Record], profile: Option<&str>) -> bool {
+        use std::collections::{HashMap, HashSet};
+        let mut projects: HashMap<_, _> = self.projects.iter().enumerate().map(|(i,p)| (p.path.clone(),i)).collect();
+        let mut sessions: Vec<HashMap<_, _>> = self.projects.iter().map(|p| p.sessions.iter().enumerate()
+            .filter_map(|(i,s)| s.omp_session.clone().map(|file| (file,i))).collect()).collect();
+        let mut touched = HashSet::new();
         let mut changed = false;
         for record in records {
-            let existed = self.projects.iter().any(|p| p.path == record.cwd);
-            let project = self.ensure_project(record.cwd.clone());
-            let p = self.project_mut(project).unwrap();
-            p.last_used = if existed { p.last_used.max(record.modified) } else { record.modified };
-            if let Some(s) = p.sessions.iter_mut().find(|s| s.omp_session.as_ref() == Some(&record.file)) {
-                if s.title != record.title || s.last_used != record.modified { s.title = record.title.clone(); s.last_used = record.modified; changed = true; }
+            let index = *projects.entry(record.cwd.clone()).or_insert_with(|| {
+                let index = self.projects.len();
+                self.projects.push(Project { id: Id::new_v4(), path: record.cwd.clone(), pinned: false,
+                    last_used: record.modified, expanded: true, sessions: vec![] });
+                sessions.push(HashMap::new());
+                changed = true;
+                index
+            });
+            let p = &mut self.projects[index];
+            if p.last_used < record.modified { p.last_used = record.modified; changed = true; }
+            if let Some(&session) = sessions[index].get(&record.file) {
+                let s = &mut p.sessions[session];
+                if s.title != record.title || s.last_used != record.modified {
+                    s.title = record.title.clone(); s.last_used = record.modified; changed = true; touched.insert(index);
+                }
             } else {
                 // AgentDock IDs identify tabs; the exact OMP identity is the file path.
+                sessions[index].insert(record.file.clone(), p.sessions.len());
                 p.sessions.push(SessionInfo { id: Id::new_v4(), title: record.title.clone(), last_used: record.modified,
                     launch: Launch::omp(profile, false), resume: None, omp_session: Some(record.file.clone()) });
-                changed = true;
+                changed = true; touched.insert(index);
             }
-            p.sessions.sort_by(|a,b| b.last_used.cmp(&a.last_used));
         }
+        for index in touched { self.projects[index].sessions.sort_by(|a,b| b.last_used.cmp(&a.last_used)); }
         changed
     }
 }
@@ -192,5 +207,19 @@ impl Store {
         let launch = &store.session(id).unwrap().1.launch;
         assert_eq!(launch.args, ["--profile", "work", "--resume", "first.jsonl"]);
         assert!(!launch.args.iter().any(|arg| arg == "-c"));
+    }
+    #[test] fn import_batch_updates_duplicates_and_keeps_tab_identity() {
+        let mut store=Store::default();
+        let record=|cwd:&str,file:&str,modified|crate::omp::Record{
+            id:Id::new_v4(),cwd:cwd.into(),file:file.into(),title:format!("updated {modified}"),modified,
+        };
+        store.import_omp(&[record("a","one",10),record("a","two",20)],None);
+        let id=store.projects[0].sessions[1].id;
+        assert!(store.import_omp(&[record("a","one",30),record("b","one",5),record("a","one",40)],None));
+        assert_eq!(store.projects[0].sessions.len(),2);
+        assert_eq!(store.projects[0].sessions[0].id,id);
+        assert_eq!(store.projects[0].sessions[0].last_used,40);
+        assert_eq!(store.projects[1].sessions.len(),1);
+        assert!(!store.import_omp(&[record("a","one",40),record("b","one",5)],None));
     }
 }

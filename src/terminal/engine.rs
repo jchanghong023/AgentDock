@@ -15,6 +15,11 @@ impl TerminalConfiguration for Config{
 #[derive(Debug,Clone,Copy)]pub enum SelectionMode{Character,Word,Line}
 #[derive(Debug,Clone,PartialEq,Eq)]struct Selection{anchor:Position,extent:Position}
 impl Selection{
+    fn columns(&self,row:isize,cols:usize)->Option<(usize,usize)>{
+        let(a,b)=self.ordered();
+        if row<a.row||row>b.row{return None;}
+        Some((if row==a.row{a.column}else{0},if row==b.row{b.column}else{cols.saturating_sub(1)}))
+    }
     fn ordered(&self)->(Position,Position){if self.anchor<=self.extent{(self.anchor,self.extent)}else{(self.extent,self.anchor)}}
     fn contains(&self,p:Position)->bool{let(a,b)=self.ordered();p>=a&&p<=b}
 }
@@ -95,9 +100,9 @@ impl Engine{
         let t=&self.terminal;let size=t.get_size();let palette=t.palette();let start=self.first();
         let mut cache=self.cache.borrow_mut();
         let alternate=t.is_alt_screen_active();let reverse=t.get_reverse_video();
-        if cache.palette.as_ref()!=Some(&palette)||cache.columns!=size.cols||cache.alternate!=alternate||cache.reverse!=reverse||cache.selection!=self.selection {
+        if cache.palette.as_ref()!=Some(&palette)||cache.columns!=size.cols||cache.alternate!=alternate||cache.reverse!=reverse {
             cache.rows.clear();cache.palette=Some(palette.clone());cache.columns=size.cols;
-            cache.alternate=alternate;cache.reverse=reverse;cache.selection=self.selection.clone();
+            cache.alternate=alternate;cache.reverse=reverse;
         }
         let mut next=Vec::with_capacity(size.rows);
         // Borrow core lines instead of cloning the entire screen on every update.
@@ -107,7 +112,9 @@ impl Engine{
             let seqno=line.current_seqno();
             if let Ok(index)=cache.rows.binary_search_by_key(&row,|(r,_,_)|*r){
                 let (_,previous,cells)=&cache.rows[index];
-                if *previous==seqno{next.push((row,seqno,Arc::clone(cells)));continue;}
+                let old_selection=cache.selection.as_ref().and_then(|s|s.columns(row,size.cols));
+                let new_selection=self.selection.as_ref().and_then(|s|s.columns(row,size.cols));
+                if *previous==seqno&&old_selection==new_selection{next.push((row,seqno,Arc::clone(cells)));continue;}
             }
             let cells=line.visible_cells().filter(|c|c.cell_index()<size.cols).map(|c|{
                 let a=c.attrs();let mut fg=rgba(palette.resolve_fg(a.foreground()));let mut bg=rgba(palette.resolve_bg(a.background()));
@@ -118,7 +125,7 @@ impl Engine{
             }).collect();
             next.push((row,seqno,Arc::new(cells)));
         }});
-        let lines=next.iter().map(|(_,_,cells)|Arc::clone(cells)).collect();cache.rows=next;
+        let lines=next.iter().map(|(_,_,cells)|Arc::clone(cells)).collect();cache.rows=next;cache.selection=self.selection.clone();
         let cursor=t.cursor_pos();
         Snapshot{lines,rows:size.rows,columns:size.cols,cursor_column:cursor.x,cursor_row:cursor.y.max(0)as usize,cursor_visible:cursor.visibility==CursorVisibility::Visible&&self.offset==0,cursor_shape:cursor.shape,background:rgba(palette.background),mouse_grabbed:t.is_mouse_grabbed(),alternate:t.is_alt_screen_active(),scroll_offset:self.offset,history:t.screen().scrollback_rows().saturating_sub(size.rows),generation:self.generation}
     }
@@ -152,6 +159,16 @@ impl Engine{
     }
     #[test]fn bracketed_paste(){let(mut e,b)=engine();e.advance(b"\x1b[?2004h");e.paste("abc").unwrap();await_bytes(&b,b"\x1b[200~abc\x1b[201~");}
     #[test]fn unicode_selection(){let(mut e,_)=engine();e.advance("abc中文");e.select(3,0,SelectionMode::Character);e.extend(6,0);assert_eq!(e.selection_text(),"中文");}
+    #[test]fn selection_only_invalidates_changed_rows(){
+        let(mut e,_)=engine();e.resize(20,4,200,80);e.advance("中文abc\r\nsecond\r\nthird");
+        let before=e.snapshot();e.select(1,0,SelectionMode::Character);let selected=e.snapshot();
+        assert!(selected.lines[0][0].selected);
+        assert!(!Arc::ptr_eq(&before.lines[0],&selected.lines[0]));
+        assert!(Arc::ptr_eq(&before.lines[1],&selected.lines[1]));
+        e.extend(2,1);let extended=e.snapshot();
+        assert!(Arc::ptr_eq(&selected.lines[2],&extended.lines[2]));check_cached(&e);
+        e.bottom();check_cached(&e);
+    }
     #[test]fn bounded_history(){let(mut e,_)=engine();e.resize(40,12,400,240);for _ in 0..20_000{e.advance(b"line\r\n");}assert!(e.snapshot().history<=10_000);}
     #[test]fn mouse_reporting(){let(mut e,_)=engine();e.advance(b"\x1b[?1000h");assert!(e.snapshot().mouse_grabbed);}
     #[test]fn snapshot_reuses_only_unchanged_rows(){
