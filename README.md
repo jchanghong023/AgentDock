@@ -68,6 +68,12 @@ Debug 构建用于开发调试；软件渲染界面的日常运行使用 Release
 终端出现新输出时，左侧会话显示圆点。关闭运行中的终端或退出程序要求确认。
 可拖动左右分隔线及左侧上下分隔线。没有独立的编辑或保存文件操作。
 
+标签栏 `+` 旁的 `▾` 打开终端选择面板：OMP、Windows PowerShell、命令提示符、
+已安装的 PowerShell 7，以及本机 WSL 发行版。选择后在当前项目目录新建独立标签；
+WSL 通过 `wsl.exe --distribution NAME --cd DIRECTORY` 启动默认 Linux Shell。
+`+` 仍直接新建 OMP。不会安装发行版或改变 WSL 默认设置。
+本机 Ubuntu-24.04 / CentOS-7 的验证见 [WSL 实测](verification/WSL-PROFILES.md)。
+
 ## 构建与验证
 
 需要 Rust / Cargo，以及 `rustfmt`、`clippy`。Iced 所选版本要求 Rust 1.88

@@ -14,6 +14,9 @@ use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::Arc, time::{Dura
 pub enum RecentKey { Project(Id), Session(Id) }
 #[derive(Debug, Clone)]
 pub enum Message {
+    ToggleProfiles,
+    ProfilesLoaded(crate::terminal::profiles::Profiles),
+    LaunchProfile(usize),
     WebBounds(iced::Rectangle),
     WebResult(Result<(), String>),
     WebPaste(Id, Id, Option<String>),
@@ -106,6 +109,9 @@ impl PollWatch {
     }
 }
 pub struct App {
+    profile_picker: bool,
+    profiles_loading: bool,
+    profiles: crate::terminal::profiles::Profiles,
     web: web_terminal::Bridge,
     store: Store,
     persistence: Persistence,
@@ -175,6 +181,7 @@ impl App {
         }
         let (spawned_tx, spawned_rx) = bounded(16);
         let mut app = Self {
+            profile_picker: false, profiles_loading: false, profiles: Default::default(),
             web: web_terminal::Bridge::new(cfg!(windows) && !options.native_terminal),
             store, persistence, files, tree: FileTree::default(), sessions: HashMap::new(),
             spawning: HashSet::new(), spawned_tx, spawned_rx, tabs: vec![], active: Content::Empty,
@@ -259,6 +266,7 @@ impl App {
         self.rebuild_files();
     }
     fn focus(&mut self, next: Content) {
+        self.profile_picker = false;
         if let Content::Terminal(previous) = self.active {
             if let Some(session) = self.sessions.get_mut(&previous) { if !session.raw { session.engine.terminal.focus_changed(false); } }
         }
@@ -313,7 +321,8 @@ impl App {
         if self.store.session(id).and_then(|(_, session)| session.omp_session.as_ref()).is_some_and(|file| !file.is_file()) {
             self.notice("所选 OMP 会话文件已不存在，未启动其他会话。"); return;
         }
-        self.store.continue_omp(id, Some(self.omp_profile.as_deref().unwrap_or("default")));
+        let is_omp = self.store.session(id).is_some_and(|(_,s)| s.omp_session.is_some() || std::path::Path::new(&s.launch.program).file_name().is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("omp") || name.to_string_lossy().eq_ignore_ascii_case("omp.exe")));
+        if is_omp { self.store.continue_omp(id, Some(self.omp_profile.as_deref().unwrap_or("default"))); }
         self.dirty = true;
         self.start_session(id);
     }
@@ -429,7 +438,7 @@ impl App {
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_inner(message);
-        let active = if self.confirmation.is_none() && !self.closing { match self.active { Content::Terminal(id) => Some(id), _ => None } } else { None };
+        let active = if self.confirmation.is_none() && !self.profile_picker && !self.closing { match self.active { Content::Terminal(id) => Some(id), _ => None } } else { None };
         let sessions = self.sessions.iter().filter(|(_, s)| s.raw).map(|(id, s)| (*id, s.instance_id())).collect();
         let web = self.web.flush(self.window, active, sessions, &self.store.settings, self.focus_serial).map(Message::WebResult);
         Task::batch([task, web])
@@ -463,6 +472,26 @@ impl App {
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ToggleProfiles => {
+                self.profile_picker = !self.profile_picker;
+                if self.profile_picker && !self.profiles_loading {
+                    self.profiles_loading = true;
+                    let (tx,rx) = iced::futures::channel::oneshot::channel();
+                    let result=std::thread::Builder::new().name("agentdock-profiles".into()).spawn(move || { let _=tx.send(crate::terminal::profiles::discover()); });
+                    if let Err(error)=result { self.profiles_loading=false; self.notice(error.to_string()); }
+                    else { return Task::perform(async move { rx.await.unwrap_or_default() }, Message::ProfilesLoaded); }
+                }
+            }
+            Message::ProfilesLoaded(profiles) => { self.profiles=profiles; self.profiles_loading=false; }
+            Message::LaunchProfile(index) => {
+                let Some(profile)=self.profiles.items.get(index).cloned() else { return Task::none(); };
+                let Some(project)=self.selected_project.or_else(||self.store.sorted().first().map(|p|p.id)) else { self.notice("请先选择一个工作目录。");return Task::none(); };
+                if self.sessions.len()+self.spawning.len()>=16 { self.notice("同时保留终端的上限为 16；先关闭不用的标签。");return Task::none(); }
+                let Some(path)=self.store.projects.iter().find(|p|p.id==project).map(|p|p.path.clone()) else { return Task::none(); };
+                if let Some(id)=self.store.new_session(project,profile.launch(&path)) {
+                    self.store.title(id,&profile.title);self.dirty=true;self.start_session(id);
+                }
+            }
             Message::WebBounds(bounds) => self.web.bounds = Some(bounds),
             Message::WebResult(Ok(())) => {},
             Message::WebResult(Err(error)) => { self.web.failed(); self.notice = Some(format!("WebView2 启动或通信失败：{error}；可使用 --native-terminal 启动。")); },
@@ -627,6 +656,13 @@ impl App {
     }
     fn content_view(&self) -> Element<'_, Message> {
         if let Some(confirmation) = self.confirmation { return self.confirmation_view(confirmation); }
+        if self.profile_picker {
+            let mut choices=column![row![text("新建终端").size(23),Space::new().width(Length::Fill),button("返回").on_press(Message::ToggleProfiles)].spacing(12),text("在当前项目目录打开独立标签").size(14),button("OMP Agent").on_press(Message::NewSelected)].spacing(14).max_width(520);
+            if self.profiles_loading { choices=choices.push(text("正在查找本机 Shell 和 WSL 发行版…").size(14)); }
+            for (index,profile) in self.profiles.items.iter().enumerate() { choices=choices.push(button(text(&profile.title)).width(Length::Fill).padding([10,16]).on_press(Message::LaunchProfile(index))); }
+            if let Some(warning)=&self.profiles.warning { choices=choices.push(text(warning).size(13)); }
+            return container(scrollable(choices)).padding(28).center_x(Length::Fill).height(Length::Fill).into();
+        }
         match self.active {
             Content::Terminal(id) => {
                 if self.web.enabled {
@@ -688,6 +724,7 @@ impl App {
         }
         if self.tabs.is_empty() && self.document.is_none() { tabs = tabs.push(text("终端 / 文件预览").size(13)); }
         tabs = tabs.push(button(text("+").size(19)).padding([2, 12]).style(style::tab(false)).on_press(Message::NewSelected));
+        tabs = tabs.push(button(text("▾").size(19)).padding([2, 10]).style(style::tab(self.profile_picker)).on_press(Message::ToggleProfiles));
         let tabbar = container(scrollable(container(tabs).padding([3, 5])).direction(scrollable::Direction::Horizontal(Default::default()))).style(style::panel);
         let mut right = column![tabbar, self.content_view()].width(Length::Fill).height(Length::Fill);
         if let Some(notice) = &self.notice {
