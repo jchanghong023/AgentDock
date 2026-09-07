@@ -15,6 +15,11 @@
 
 程序显示名称为 AgentDock，Cargo 包和可执行文件名为 `agentdock`。
 
+2026-09-08：Windows 默认终端已改为内嵌 xterm.js 6.0.0，需要本机 WebView2 Runtime。
+Rust 继续管理 PTY，侧栏、标签和预览仍由 Iced 提供。可用 `--native-terminal` 启动原终端。
+Linux 保留原实现，不引入 WebKitGTK；内部老系统仍需现场验证。
+本轮 58 项测试、真实 OMP `/model` 和中文连续输出结果见 [xterm.js 实测](verification/XTERM-WINDOWS.md)。
+
 **Windows 验证状态（2026-09-07）：已编译并实际打开 GUI，最近一次 Release 验证的 44 项 Rust 测试通过，
 包含真实 ConPTY 输入输出与尺寸调整。界面已按参考图调整为蓝白侧栏、文件图标、
 浅色标签、深色终端和 Markdown 只读预览。CentOS 7 尚未编译或实机验证。**
@@ -39,7 +44,7 @@ Debug 构建用于开发调试；软件渲染界面的日常运行使用 Release
 | 应用语言 | Rust，禁止本仓库中的 unsafe Rust；没有 C++ 应用层 |
 | GUI | Iced 0.14.0，自定义虚拟列表、终端控件和分隔线 |
 | 渲染 | tiny-skia 软件渲染；Linux 显式开启 X11，不开 wgpu / Wayland |
-| 终端解析 | wezterm-term，固定上游 20240203-110809-5046fc22 |
+| 终端解析与显示 | Windows：xterm.js 6.0.0 + WebView2，禁用 GPU；Linux / `--native-terminal`：原 wezterm-term + Iced 控件 |
 | PTY | portable-pty 0.9.0：Unix PTY / Windows ConPTY |
 | 文件读取 | 后台线程，目录按页读取，文件仅明确打开时读取 |
 | Markdown | Iced Markdown 解析及自定义 Viewer，标题分隔线、浅色代码块与逐块复制；可切换只读源码 |
@@ -173,7 +178,7 @@ Markdown 跨页结构可能断开，可切换源码阅读。支持 UTF-8 与带 
 
 源码已实现 ANSI/VT 解析、颜色/字形属性、宽字符、键盘编码、IME 事件桥接、
 鼠标上报、选择复制、粘贴、回滚、PTY 尺寸同步和 alternate screen。
-但自定义绘制与输入层是新代码，**不等于成熟 WezTerm GUI 的完整体验**。
+原终端的自定义绘制与输入层是新代码，**不等于成熟 WezTerm GUI 的完整体验**；Windows 默认已采用 xterm.js 的解析、绘制与输入处理。
 没有继承用户 WezTerm fork；已实测 OMP 启动和指定历史恢复，尚未完整验收 vim、中文输入法或远程桌面环境。
 
 当前不做 Sixel/iTerm2/Kitty 图片显示、跨单元格字体连字、双向文字完整排版、

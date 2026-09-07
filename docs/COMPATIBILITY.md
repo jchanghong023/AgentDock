@@ -1,5 +1,11 @@
 # 平台与构建边界
 
+2026-09-08 更新：Windows 默认使用内嵌 xterm.js + WebView2 Runtime，资源随程序打包，
+无需运行时安装 npm 或访问 CDN。WebView2 配置文件放在工作目录 `.tmp/webview/`，该目录须可写。
+使用 `--native-terminal` 可运行原终端。Linux 的依赖树不包含 wry / GTK / WebKit，仍走原 X11 路径。
+本次 Windows 测试 58 项通过；内部老系统和系统中文输入法候选窗口尚未实测。
+完整数据及复测方法见 [xterm.js Windows 实测](../verification/XTERM-WINDOWS.md)。
+
 ## 当前已知状态
 
 | 平台 | 源码目标 | 本次编译 | 本次运行 |

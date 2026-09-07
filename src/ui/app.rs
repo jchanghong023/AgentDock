@@ -3,6 +3,8 @@
 use super::{divider::{Axis, Divider}, terminal_view::TerminalView, virtual_list::{Click, Row, VirtualList}};
 use crate::{cli::Options, files::{Completed, FileService, FileTree, Kind, Preview, Request, TreeRow}, model::{Id, Launch, Store}, paths, persistence::Persistence, terminal::{input::Action, Session, Snapshot}};
 use super::style;
+use super::web_terminal;
+use base64::Engine as _;
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use iced::{clipboard, widget::{button, column, container, markdown, row, scrollable, text, Space}, window, Element, Font, Length, Size, Subscription, Task};
@@ -12,6 +14,9 @@ use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::Arc, time::{Dura
 pub enum RecentKey { Project(Id), Session(Id) }
 #[derive(Debug, Clone)]
 pub enum Message {
+    WebBounds(iced::Rectangle),
+    WebResult(Result<(), String>),
+    WebPaste(Id, Id, Option<String>),
     Tick,
     TerminalOutput(Id),
     Window(window::Id, window::Event),
@@ -81,6 +86,7 @@ type SpawnResult = (Id, std::result::Result<Session, String>);
 // tree 31 times per second; retain a slow heartbeat for exit/save retries.
 #[derive(Clone)]
 struct PollWatch {
+    web: Receiver<web_terminal::Event>,
     started: Instant,
     files: Receiver<Completed>, spawned: Receiver<SpawnResult>, errors: Receiver<String>,
     heartbeat: Arc<std::sync::Mutex<Instant>>,
@@ -93,13 +99,14 @@ impl std::hash::Hash for PollWatch {
 impl PollWatch {
     fn ready(&self, now: Instant) -> bool {
         let mut last = self.heartbeat.lock().unwrap();
-        if !self.files.is_empty() || !self.spawned.is_empty() || !self.errors.is_empty()
+        if !self.web.is_empty() || !self.files.is_empty() || !self.spawned.is_empty() || !self.errors.is_empty()
             || now.duration_since(*last) >= Duration::from_secs(1) {
             *last = now; true
         } else { false }
     }
 }
 pub struct App {
+    web: web_terminal::Bridge,
     store: Store,
     persistence: Persistence,
     files: FileService,
@@ -168,6 +175,7 @@ impl App {
         }
         let (spawned_tx, spawned_rx) = bounded(16);
         let mut app = Self {
+            web: web_terminal::Bridge::new(cfg!(windows) && !options.native_terminal),
             store, persistence, files, tree: FileTree::default(), sessions: HashMap::new(),
             spawning: HashSet::new(), spawned_tx, spawned_rx, tabs: vec![], active: Content::Empty,
             last_terminal: None, snapshot: None, document: None, preview_token: 0,
@@ -194,6 +202,7 @@ impl App {
         let mut sessions: Vec<_> = self.sessions.iter().collect();
         sessions.sort_by_key(|(id, _)| **id);
         let watch = PollWatch { started: self.started,
+            web: self.web.events.clone(),
             files: self.files.rx.clone(), spawned: self.spawned_rx.clone(), errors: self.persistence.errors.clone(), heartbeat: self.heartbeat.clone() };
         let mut subscriptions=vec![
             iced::time::every(Duration::from_millis(16)).with(watch).filter_map(|(watch, now)| watch.ready(now).then_some(Message::Tick)),
@@ -251,7 +260,7 @@ impl App {
     }
     fn focus(&mut self, next: Content) {
         if let Content::Terminal(previous) = self.active {
-            if let Some(session) = self.sessions.get_mut(&previous) { session.engine.terminal.focus_changed(false); }
+            if let Some(session) = self.sessions.get_mut(&previous) { if !session.raw { session.engine.terminal.focus_changed(false); } }
         }
         self.active = next;
         self.terminal_focus = matches!(next, Content::Terminal(_));
@@ -261,8 +270,8 @@ impl App {
             self.last_terminal = Some(id);
             if let Some((p, _)) = self.store.session(id) { self.selected_project = Some(p.id); }
             if let Some(session) = self.sessions.get_mut(&id) {
-                session.unread = false; session.engine.terminal.focus_changed(true);
-                self.snapshot = Some((id, session.engine.snapshot()));
+                session.unread = false;
+                if !session.raw { session.engine.terminal.focus_changed(true); self.snapshot = Some((id, session.engine.snapshot())); }
             } else { self.snapshot = None; }
             self.store.touch(id); self.dirty = true;
         }
@@ -279,11 +288,12 @@ impl App {
         let launch = info.resume.clone().unwrap_or_else(|| info.launch.clone());
         let settings = self.store.settings.clone();
         let output = self.spawned_tx.clone();
+        let raw = self.web.enabled;
         self.sessions.remove(&id);
         self.spawning.insert(id);
         if !self.tabs.contains(&id) { self.tabs.push(id); }
         let result = std::thread::Builder::new().name("agentdock-spawn".into()).spawn(move || {
-            let session = Session::spawn(&path, &launch, &settings).map_err(|e| format!("{e:#}"));
+            let session = Session::spawn_mode(&path, &launch, &settings, raw).map_err(|e| format!("{e:#}"));
             let _ = output.send((id, session));
         });
         if let Err(error) = result { self.spawning.remove(&id); self.notice(format!("无法启动后台线程：{error}")); }
@@ -335,6 +345,8 @@ impl App {
         window::close(id)
     }
     fn tick(&mut self) -> Task<Message> {
+        let events: Vec<_> = self.web.events.try_iter().collect();
+        let tasks: Vec<_> = events.into_iter().map(|event| self.web_event(event)).collect();
         if self.omp_scan_at.elapsed() >= Duration::from_secs(5) {
             self.files.scan_omp(self.omp_root.clone()); self.omp_scan_at = Instant::now();
         }
@@ -359,8 +371,9 @@ impl App {
         for (id, result) in self.spawned_rx.try_iter().collect::<Vec<_>>() {
             if !self.spawning.remove(&id) || self.closing { continue; } // Dropping a cancelled result closes its PTY.
             match result {
-                Ok(session) => {
-                    if self.active == Content::Terminal(id) { self.snapshot = Some((id, session.engine.snapshot())); }
+                Ok(mut session) => {
+                    if session.raw { session.raw_waiting = !self.web.ready; }
+                    if !session.raw && self.active == Content::Terminal(id) { self.snapshot = Some((id, session.engine.snapshot())); }
                     self.sessions.insert(id, session);
                 }
                 Err(error) => self.notice(format!("终端启动失败：{error}")),
@@ -382,12 +395,26 @@ impl App {
         if self.smoke_ms.is_some_and(|ms| self.started.elapsed() >= Duration::from_millis(ms)) {
             if let Some(id) = self.window { eprintln!("AGENTDOCK_GUI_SMOKE_EVENT_LOOP_OK"); return self.finish(id); }
         }
-        Task::none()
+        Task::batch(tasks)
     }
     fn poll_session(&mut self,id:Id)->bool {
         let Some(session)=self.sessions.get_mut(&id)else{return false;};
         let previous_running=session.running();let previous_unread=session.unread;
         let output=session.poll(if self.active==Content::Terminal(id){64*1024}else{16*1024});
+        if session.raw {
+            if self.active == Content::Terminal(id) { session.unread = false; }
+            let epoch = session.instance_id();
+            if !session.raw_output.is_empty() {
+                let bytes = std::mem::take(&mut session.raw_output); session.raw_waiting = true;
+                self.web.commands.push(serde_json::json!({"kind":"output","id":id,"epoch":epoch,"data":base64::engine::general_purpose::STANDARD.encode(bytes)}));
+            }
+            if session.input_written > 0 {
+                session.input_written = 0;
+                self.web.commands.push(serde_json::json!({"kind":"written","id":id,"epoch":epoch}));
+            }
+            if let Some(error) = session.error.take() { self.notice = Some(format!("终端 I/O：{error}")); }
+            return previous_running != session.running() || previous_unread != session.unread;
+        }
         if self.active==Content::Terminal(id){
             session.unread=false;
             if output{self.snapshot=Some((id,session.engine.snapshot()));}
@@ -401,7 +428,46 @@ impl App {
         changed
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.update_inner(message);
+        let active = if self.confirmation.is_none() && !self.closing { match self.active { Content::Terminal(id) => Some(id), _ => None } } else { None };
+        let sessions = self.sessions.iter().filter(|(_, s)| s.raw).map(|(id, s)| (*id, s.instance_id())).collect();
+        let web = self.web.flush(self.window, active, sessions, &self.store.settings, self.focus_serial).map(Message::WebResult);
+        Task::batch([task, web])
+    }
+    fn web_event(&mut self, event: web_terminal::Event) -> Task<Message> {
+        if event.kind == "ready" {
+            if !self.web.ready { self.web.ready = true; for session in self.sessions.values_mut().filter(|s| s.raw) { session.raw_waiting = false; } }
+            return Task::none();
+        }
+        if event.kind == "error" { self.notice = event.data; return Task::none(); }
+        let (Some(id), Some(epoch)) = (event.id, event.epoch) else { return Task::none(); };
+        let Some(session) = self.sessions.get_mut(&id).filter(|s| s.raw && s.instance_id() == epoch) else { return Task::none(); };
+        match event.kind.as_str() {
+            "ack" => session.raw_waiting = false,
+            "input" => {
+                if let Some(bytes) = event.data.and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok()) {
+                    if let Err(error) = session.raw_input(bytes) {
+                        self.notice = Some(format!("终端输入：{error:#}"));
+                        self.web.commands.push(serde_json::json!({"kind":"written","id":id,"epoch":epoch}));
+                    }
+                }
+            }
+            "resize" => if let (Some(cols), Some(rows)) = (event.cols, event.rows) { if let Err(error) = session.resize(cols.clamp(2,1000), rows.clamp(1,500), 0, 0) { self.notice = Some(error.to_string()); } },
+            "title" => if let Some(title) = event.title { let title: String = title.chars().filter(|c| !c.is_control()).take(120).collect(); if !title.is_empty() { self.store.title(id, &title); self.dirty = true; self.rebuild_recent(); } },
+            "copy" => if let Some(data) = event.data { return clipboard::write(data); },
+            "paste" => return clipboard::read().map(move |data| Message::WebPaste(id, epoch, data)),
+            "zoom" => { let delta = event.data.and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0).clamp(-1.0,1.0); self.store.settings.font_size = (self.store.settings.font_size + delta).clamp(9.0,40.0); self.dirty = true; },
+            _ => {}
+        }
+        Task::none()
+    }
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WebBounds(bounds) => self.web.bounds = Some(bounds),
+            Message::WebResult(Ok(())) => {},
+            Message::WebResult(Err(error)) => { self.web.failed(); self.notice = Some(format!("WebView2 启动或通信失败：{error}；可使用 --native-terminal 启动。")); },
+            Message::WebPaste(id, epoch, Some(data)) => if self.sessions.get(&id).is_some_and(|s| s.instance_id() == epoch) { self.web.commands.push(serde_json::json!({"kind":"paste","id":id,"epoch":epoch,"data":data})); },
+            Message::WebPaste(_, _, None) => {},
             Message::Tick => return self.tick(),
             Message::TerminalOutput(id) => { if self.poll_session(id){self.rebuild_recent();} }
             Message::Window(id, event) => {
@@ -482,6 +548,17 @@ impl App {
                     self.dirty = true; return Task::none();
                 }
                 if let Some(session) = self.sessions.get_mut(&id) {
+                    if session.raw {
+                        let result = match action {
+                            Action::Text(value) => session.raw_input(value.into_bytes()),
+                            Action::Key { key: wezterm_term::KeyCode::Enter, pressed: true, .. } => session.raw_input(vec![13]),
+                            Action::Key { key: wezterm_term::KeyCode::Escape, pressed: true, .. } => session.raw_input(vec![27]),
+                            Action::Resize { cols, rows, width, height } => session.resize(cols, rows, width, height),
+                            _ => Ok(())
+                        };
+                        if let Err(error) = result { self.notice = Some(error.to_string()); }
+                        return Task::none();
+                    }
                     if matches!(action, Action::Copy) { return clipboard::write(session.engine.selection_text()); }
                     let result: Result<()> = match action {
                         Action::Key { key, modifiers, pressed } => {
@@ -552,6 +629,13 @@ impl App {
         if let Some(confirmation) = self.confirmation { return self.confirmation_view(confirmation); }
         match self.active {
             Content::Terminal(id) => {
+                if self.web.enabled {
+                    let terminal: Element<'_, Message> = web_terminal::Bounds::new(Message::WebBounds).into();
+                    if let Some(status) = self.sessions.get(&id).and_then(|s| s.exited.as_ref()) {
+                        return column![terminal, row![text(format!("进程已退出 · {status}")).size(12), button("重新启动").on_press(Message::Restart(id))].padding(6).spacing(12)].into();
+                    }
+                    return terminal;
+                }
                 if let Some((snapshot_id, snapshot)) = &self.snapshot {
                     if *snapshot_id == id {
                         let terminal: Element<'_, Message> = TerminalView::new(id, snapshot, self.font, self.store.settings.font_size, self.focus_serial, self.terminal_focus, move |action| Message::Terminal(id, action)).into();
@@ -633,7 +717,7 @@ mod tests {
         let (file_tx, files) = bounded(2);
         let (_spawn_tx, spawned) = bounded(2);
         let (_error_tx, errors) = bounded(2);
-        let watch = PollWatch { started: now, files, spawned, errors, heartbeat: Arc::new(std::sync::Mutex::new(now)) };
+        let watch = PollWatch { started: now, files, spawned, errors, web: crossbeam_channel::unbounded().1, heartbeat: Arc::new(std::sync::Mutex::new(now)) };
         for millis in (16..1000).step_by(16) { assert!(!watch.ready(now + Duration::from_millis(millis))); }
         assert!(watch.ready(now + Duration::from_secs(1)));
         file_tx.send(Completed::Roots(vec![])).unwrap();

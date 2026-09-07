@@ -13,6 +13,7 @@ pub struct Options {
     pub smoke_ui_ms: Option<u64>,
     pub help: bool,
     pub version: bool,
+    pub native_terminal: bool,
 }
 impl Options {
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self> {
@@ -24,6 +25,7 @@ impl Options {
                 "--help" | "-h" => options.help = true,
                 "--version" | "-V" => options.version = true,
                 "--self-test" => options.self_test = true,
+                "--native-terminal" => options.native_terminal = true,
                 "--profile" => {
                     let value = args.next().context("--profile 缺少配置名称")?.into_string().map_err(|_| anyhow::anyhow!("profile 名称必须为 UTF-8"))?;
                     anyhow::ensure!(!value.trim().is_empty(), "--profile 配置名称不能为空");
@@ -71,6 +73,7 @@ pub const HELP: &str = "AgentDock 0.1.0 — 原生终端工作台\n\n\
   --open FILE           显式打开一个只读文件预览\n\
   --state-dir DIRECTORY 使用独立的历史和配置目录\n\
   --self-test           无图形界面的真实 PTY 往返自测\n\
+  --native-terminal     Windows 使用原终端实现（默认 xterm.js）；Linux 始终使用原实现\n\
   --smoke-ui-ms N       使用独立状态目录启动 GUI 并自动退出，仅供验证\n\
   --version             版本\n\
   --help                帮助\n\n\

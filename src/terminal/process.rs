@@ -6,7 +6,7 @@ use portable_pty::{native_pty_system,Child,CommandBuilder,MasterPty,PtySize};
 use std::{io::{Read,Write},path::Path,time::{Duration,Instant}};
 use std::{pin::Pin,sync::{Arc,atomic::{AtomicBool,Ordering}},task::{Context as TaskContext,Poll}};
 use iced::futures::{Stream,task::AtomicWaker};
-#[derive(Debug)]enum Output{Bytes(Vec<u8>),Eof,Error(String)}
+#[derive(Debug)]enum Output{Bytes(Vec<u8>),Written(usize),Eof,Error(String)}
 // One outstanding UI notification per session. Keep it outstanding until the
 // UI drains output, so a busy PTY cannot flood the application message queue.
 #[derive(Default)]struct OutputSignal{scheduled:AtomicBool,ready:AtomicBool,waker:AtomicWaker}
@@ -44,9 +44,13 @@ impl Write for Input{
 pub struct Session{
     pub engine:Engine,master:Box<dyn MasterPty+Send>,child:Option<Box<dyn Child+Send+Sync>>,
     output:Receiver<Output>,size:(usize,usize,usize,usize),watch_id:uuid::Uuid,signal:Arc<OutputSignal>,pub exited:Option<String>,pub error:Option<String>,pub unread:bool,
+    pub raw:bool,pub raw_waiting:bool,pub raw_output:Vec<u8>,pub input_written:usize,input:Sender<Vec<u8>>,
 }
 impl Session{
     pub fn spawn(cwd:&Path,launch:&Launch,settings:&Settings)->Result<Self>{
+        Self::spawn_mode(cwd,launch,settings,false)
+    }
+    pub fn spawn_mode(cwd:&Path,launch:&Launch,settings:&Settings,raw:bool)->Result<Self>{
         anyhow::ensure!(cwd.is_dir(),"工作目录不可访问：{}",cwd.display());
         let pair=native_pty_system().openpty(PtySize{rows:24,cols:80,pixel_width:0,pixel_height:0})?;
         let launch=launch.resolved();let mut cmd=CommandBuilder::new(&launch.program);cmd.args(&launch.args);cmd.cwd(cwd);
@@ -66,18 +70,26 @@ impl Session{
         });
         if let Err(e)=reader_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
         let writer_thread=std::thread::Builder::new().name("agentdock-pty-write".into()).spawn(move||{
-            while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){publish(&errors_tx,&writer_signal,Output::Error(e.to_string()));break;}}
+            while let Ok(bytes)=input_rx.recv(){if let Err(e)=writer.write_all(&bytes).and_then(|_|writer.flush()){publish(&errors_tx,&writer_signal,Output::Error(e.to_string()));break;}
+                if raw&&!publish(&errors_tx,&writer_signal,Output::Written(bytes.len())){break;}
+            }
         });
         if let Err(e)=writer_thread{let _=child.kill();let _=child.wait();return Err(e.into());}
-        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx))),master:pair.master,child:Some(child),output,size:(80,24,0,0),watch_id:uuid::Uuid::new_v4(),signal,exited:None,error:None,unread:false})
+        Ok(Self{engine:Engine::new(settings,Box::new(Input(input_tx.clone()))),master:pair.master,child:Some(child),output,size:(80,24,0,0),watch_id:uuid::Uuid::new_v4(),signal,exited:None,error:None,unread:false,raw,raw_waiting:raw,raw_output:vec![],input_written:0,input:input_tx})
+    }
+    pub fn instance_id(&self)->uuid::Uuid{self.watch_id}
+    pub fn raw_input(&self,bytes:Vec<u8>)->Result<()>{
+        anyhow::ensure!(self.raw&&bytes.len()<=32768,"无效的终端输入批次");
+        self.input.try_send(bytes).map_err(|_|anyhow::anyhow!("终端输入队列不可用"))
     }
     pub fn running(&self)->bool{self.exited.is_none()}
     pub(crate) fn watch(&self) -> OutputWatch { OutputWatch { id:self.watch_id,signal:self.signal.clone() } }
     pub fn poll(&mut self,budget:usize)->bool{
         self.signal.scheduled.store(false,Ordering::Release);
         let mut used=0;let mut changed=false;let deadline=Instant::now()+Duration::from_millis(3);
-        while used<budget&&Instant::now()<deadline{match self.output.try_recv(){
-            Ok(Output::Bytes(b))=>{used+=b.len();self.engine.advance(b);changed=true;self.unread=true;},
+        while used<budget&&Instant::now()<deadline&&(!self.raw||!self.raw_waiting){match self.output.try_recv(){
+            Ok(Output::Bytes(b))=>{used+=b.len();if self.raw{self.raw_output.extend(b);}else{self.engine.advance(b);}changed=true;self.unread=true;},
+            Ok(Output::Written(n))=>{self.input_written+=n;changed=true;},
             Ok(Output::Eof)=>break,
             Ok(Output::Error(e))=>{self.error=Some(e);changed=true;},Err(_)=>break,
         }}
@@ -85,14 +97,14 @@ impl Session{
             Ok(Some(status))=>{self.exited=Some(status.to_string());changed=true;},Ok(None)=>{},
             Err(e)=>{self.error=Some(e.to_string());self.exited=Some("无法读取退出状态".into());changed=true;}
         }}}
-        if !self.output.is_empty(){self.signal.notify();}
+        if !self.output.is_empty()&&(!self.raw||!self.raw_waiting){self.signal.notify();}
         changed
     }
     pub fn resize(&mut self,cols:usize,rows:usize,width:usize,height:usize)->Result<()>{
         let(cols,rows,width,height)=(cols.clamp(2,1000),rows.clamp(1,500),width.min(u16::MAX as usize),height.min(u16::MAX as usize));
         if self.size==(cols,rows,width,height){return Ok(());}
         self.master.resize(PtySize{cols:cols.clamp(2,1000)as u16,rows:rows.clamp(1,500)as u16,pixel_width:width.min(u16::MAX as usize)as u16,pixel_height:height.min(u16::MAX as usize)as u16})?;
-        self.engine.resize(cols,rows,width,height);self.size=(cols,rows,width,height);Ok(())
+        if !self.raw{self.engine.resize(cols,rows,width,height);}self.size=(cols,rows,width,height);Ok(())
     }
 }
 impl Drop for Session{
@@ -173,5 +185,24 @@ pub fn self_test()->Result<()>{
         let generation=s.engine.generation();let selection=s.engine.selection_text();
         s.resize(90,20,900,400).unwrap();assert_eq!(s.engine.generation(),generation);
         assert_eq!(s.engine.selection_text(),selection);
+    }
+    #[test]fn raw_pty_waits_for_frontend_and_preserves_bytes(){
+        #[cfg(windows)]let launch=Launch{program:"cmd.exe".into(),args:vec!["/Q".into(),"/V:ON".into(),"/C".into(),"echo RAW_READY & set /p token= & echo RAW_ECHO:!token!".into()]};
+        #[cfg(unix)]let launch=Launch{program:"/bin/sh".into(),args:vec!["-c".into(),"printf 'RAW_READY\\n'; read line; printf 'RAW_ECHO:%s\\n' \"$line\"".into()]};
+        let mut session=Session::spawn_mode(&std::env::current_dir().unwrap(),&launch,&Settings::default(),true).unwrap();
+        let generation=session.engine.generation();let deadline=Instant::now()+Duration::from_secs(8);
+        while session.output.is_empty()&&Instant::now()<deadline{std::thread::sleep(Duration::from_millis(5));}
+        assert!(!session.output.is_empty());session.poll(65536);assert!(session.raw_output.is_empty());
+        session.raw_waiting=false;let mut received=Vec::new();let mut sent=false;let mut written=0;
+        while Instant::now()<deadline{
+            session.poll(65536);received.append(&mut session.raw_output);written+=std::mem::take(&mut session.input_written);
+            let text=String::from_utf8_lossy(&received);
+            if !sent&&text.contains("RAW_READY"){session.raw_input(b"roundtrip-123\r".to_vec()).unwrap();sent=true;}
+            if text.contains("RAW_ECHO:roundtrip-123")&&written>0{break;}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(String::from_utf8_lossy(&received).contains("RAW_ECHO:roundtrip-123"));assert!(written>0);
+        assert_eq!(session.engine.generation(),generation,"raw mode must bypass the native parser");
+        assert!(session.raw_input(vec![0;32769]).is_err());
     }
 }

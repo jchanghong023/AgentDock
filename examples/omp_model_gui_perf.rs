@@ -41,7 +41,9 @@ fn main()->anyhow::Result<()>{
     let root=std::env::current_dir()?;
     anyhow::ensure!(std::env::var_os("PI_CODING_AGENT_SESSION_DIR").map(std::path::PathBuf::from).is_some_and(|p|p.starts_with(root.join(".tmp"))),"Set PI_CODING_AGENT_SESSION_DIR to a directory under .tmp before running this probe");
     let args=vec!["--state-dir".to_owned(),root.join(".tmp/omp-gui-state").to_string_lossy().into_owned(),"--command".into(),"omp".into(),"--arg".into(),"--profile".into(),"--arg".into(),"default".into()];
-    let app=App::create(Options::parse(args.into_iter().map(Into::into))?)?;
+    let mut options=Options::parse(args.into_iter().map(Into::into))?;
+    options.native_terminal=true; // This probe measures the original Iced renderer.
+    let app=App::create(options)?;
     let state=std::cell::RefCell::new(Some(app));
     iced::application(move||Probe{app:state.borrow_mut().take().unwrap(),start:Instant::now(),last:Instant::now(),id:None,phase:0,menu_max_gap:Duration::ZERO},Probe::update,Probe::view)
         .title("AgentDock /model performance probe").theme(agentdock::ui::style::theme()).default_font(agentdock::ui::style::font())
