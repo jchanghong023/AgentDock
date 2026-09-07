@@ -15,6 +15,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agentdock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "fs2",
+ "iced",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "termwiz",
+ "uuid",
+ "wezterm-term",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -469,23 +486,6 @@ name = "deltae"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
-
-[[package]]
-name = "agentdock"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "fs2",
- "iced",
- "portable-pty",
- "serde",
- "serde_json",
- "tempfile",
- "termwiz",
- "uuid",
- "wezterm-term",
-]
 
 [[package]]
 name = "digest"
@@ -3631,8 +3631,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d"
 dependencies = [
  "android-activity",
  "atomic-waker",

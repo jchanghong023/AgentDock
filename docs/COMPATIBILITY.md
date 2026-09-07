@@ -15,6 +15,20 @@
 
 ## CentOS 7
 
+### 公司内部无 XKEYBOARD 环境
+
+已通过 `[patch.crates-io]` 使用仓库内 `vendor/winit` 的 0.30.13 补丁。
+X Server 没有 XKEYBOARD 时，改用本地 libxkbcommon 键盘映射，并跳过服务器
+XKB 事件订阅；键盘数据初始化失败会返回可定位错误。
+未设置 `XKB_CONFIG_ROOT` 时会补充 `/usr/share/X11/xkb` 搜索路径；显式设置时
+尊重该路径。默认本地布局通常为 US，可通过 `XKB_DEFAULT_LAYOUT` 等变量配置。
+远端键码与本地布局的一致性仍需现场验证。
+
+2026-09-07 在 Ubuntu 24.04 / WSL2 完成依赖编译与 X11 回归：正常 XKB、
+代理隐藏 XKEYBOARD 后的窗口创建与键盘输入、错误数据路径返回明确错误。
+测试脚本为 `scripts/test_x11_keyboard.py`。Windows 应用编译检查通过。
+这些结果不代表公司 B 机、CentOS 7 ABI、Citrix 显示、IME 或完整应用已验收。
+
 GUI 运行需要 X11 显示服务器。纯 SSH 文本登录且没有可用 DISPLAY 的服务器不能
 凭空显示 GUI。可使用实际桌面、远程桌面或另行配置的 X11 显示；这些不是本仓库
 自动部署的功能。没有物理 GPU 不等于不需要显示系统、字体和图形相关用户态库。

@@ -23,6 +23,9 @@ fs2 = "0.4"
 [dev-dependencies]
 tempfile = "3"
 
+[patch.crates-io]
+winit = { path = "vendor/winit" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
